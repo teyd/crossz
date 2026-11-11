@@ -4,12 +4,13 @@ Crosshair overlay for borderless windowed games on Windows. Rust workspace:
 
 - `crates/core`: platform-independent model, scaling, rasterizer, config and the visibility `Engine`. All logic that can be tested without Windows lives here.
 - `crates/overlay-win`: Win32 overlay window, foreground tracking and raw input. Compiles to nothing on other platforms.
-- `crates/app`: the `crossz` binary: settings UI, tray, config hot-reload.
+- `crates/app`: the `crossz` binary: settings UI (gpui-kit), tray, config hot-reload. The UI also runs on macOS without the overlay, for development.
 
 ## Commands
 
 - `mise run core`: fmt check, clippy and tests for core (runs anywhere)
-- `mise run check-win`: cross-clippy the Windows crate from macOS/Linux
+- `mise run check-win`: cross-clippy the Win32 overlay from macOS/Linux (the app itself needs `llvm-rc` to cross-build, so CI builds it on Windows)
+- `mise run run`: run crossz (on macOS: settings UI only)
 - `mise run win`: full lint, test and release build (Windows only)
 
 ## Rules
