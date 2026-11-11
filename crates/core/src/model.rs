@@ -1,14 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Color;
+use crate::{Color, Snap};
 
-/// A crosshair, measured in the profile's virtual-resolution pixels.
+/// A crosshair design, measured in game pixels: the game's resolution decides how big
+/// it ends up on screen.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Crosshair {
+    pub name: String,
     pub color: Color,
     #[serde(default = "full_opacity")]
     pub opacity: f32,
+    #[serde(default)]
+    pub snap: Snap,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arms: Option<Arms>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,29 +59,49 @@ fn full_opacity() -> f32 {
     1.0
 }
 
-impl Default for Crosshair {
-    fn default() -> Self {
-        Crosshair {
-            color: Color::GREEN,
-            opacity: 1.0,
-            arms: Some(Arms {
-                length: 6.0,
-                thickness: 2.0,
-                gap: 2.0,
-                t_style: false,
-            }),
-            dot: None,
-            circle: None,
-            outline: Some(Outline {
-                thickness: 1.0,
-                color: Color::BLACK,
-            }),
-        }
-    }
+impl Arms {
+    pub const DEFAULT: Arms = Arms {
+        length: 5.0,
+        thickness: 2.0,
+        gap: 3.0,
+        t_style: false,
+    };
+}
+
+impl Dot {
+    pub const DEFAULT: Dot = Dot { size: 2.0 };
+}
+
+impl Circle {
+    pub const DEFAULT: Circle = Circle {
+        radius: 8.0,
+        thickness: 1.0,
+    };
+}
+
+impl Outline {
+    pub const DEFAULT: Outline = Outline {
+        thickness: 1.0,
+        color: Color::BLACK,
+    };
 }
 
 impl Crosshair {
-    /// Furthest distance from the center any part reaches, in virtual pixels.
+    /// An empty design: no parts, white, outlined parts once added.
+    pub fn blank(name: impl Into<String>) -> Crosshair {
+        Crosshair {
+            name: name.into(),
+            color: Color::WHITE,
+            opacity: 1.0,
+            snap: Snap::Round,
+            arms: None,
+            dot: None,
+            circle: None,
+            outline: Some(Outline::DEFAULT),
+        }
+    }
+
+    /// Furthest distance from the center any part reaches, in game pixels.
     pub fn reach(&self) -> f32 {
         let arms = self
             .arms

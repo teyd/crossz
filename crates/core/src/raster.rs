@@ -39,7 +39,8 @@ impl Span {
     }
 }
 
-pub fn render(crosshair: &Crosshair, scale: Scale, snap: Snap) -> Image {
+pub fn render(crosshair: &Crosshair, scale: Scale) -> Image {
+    let snap = crosshair.snap;
     const PAD: u32 = 2;
     let even = |v: f32| (v.ceil() as u32).next_multiple_of(2);
     let reach = crosshair.reach();
@@ -170,7 +171,7 @@ fn rects(crosshair: &Crosshair, scale: Scale, snap: Snap) -> Vec<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Arms, Dot, Outline, ScaleMode};
+    use crate::{Arms, Dot, Outline, Resolution};
 
     const GREEN: [u8; 4] = [0, 255, 0, 255];
     const BLACK: [u8; 4] = [0, 0, 0, 255];
@@ -178,6 +179,7 @@ mod tests {
 
     fn arms() -> Crosshair {
         Crosshair {
+            color: Color::GREEN,
             arms: Some(Arms {
                 length: 6.0,
                 thickness: 2.0,
@@ -185,16 +187,19 @@ mod tests {
                 t_style: false,
             }),
             outline: None,
-            ..Crosshair::default()
+            ..Crosshair::blank("test")
+        }
+    }
+
+    impl Crosshair {
+        fn without_arms(mut self) -> Crosshair {
+            self.arms = None;
+            self
         }
     }
 
     fn stretched() -> Scale {
-        ScaleMode::Stretched {
-            width: 1280,
-            height: 960,
-        }
-        .scale(2560, 1440)
+        Resolution::custom(1280, 960).scale(2560, 1440, false)
     }
 
     /// Asserts every pixel: `color` inside one of `spans` (center-relative), clear elsewhere.
@@ -214,7 +219,7 @@ mod tests {
 
     #[test]
     fn native_arms() {
-        let img = render(&arms(), Scale::ONE, Snap::Round);
+        let img = render(&arms(), Scale::ONE);
         assert_exact(
             &img,
             &[
@@ -230,7 +235,7 @@ mod tests {
     #[test]
     fn stretched_1280x960_on_1440p_matches_stretched_game() {
         // Horizontal arms: 6x2 -> 12x3. Vertical arms: 2x6 -> 4x9. Gaps: 2 -> 4 (x), 3 (y).
-        let img = render(&arms(), stretched(), Snap::Round);
+        let img = render(&arms(), stretched());
         assert_exact(
             &img,
             &[
@@ -247,7 +252,7 @@ mod tests {
     fn t_style_drops_top_arm() {
         let mut c = arms();
         c.arms.as_mut().unwrap().t_style = true;
-        let img = render(&c, Scale::ONE, Snap::Round);
+        let img = render(&c, Scale::ONE);
         assert_exact(
             &img,
             &[(-9, -1, -3, 1), (3, -1, 9, 1), (-1, 3, 1, 9)],
@@ -258,27 +263,27 @@ mod tests {
     #[test]
     fn stretched_dot_is_wide() {
         let c = Crosshair {
-            arms: None,
             dot: Some(Dot { size: 2.0 }),
             outline: None,
-            ..Crosshair::default()
-        };
-        let img = render(&c, stretched(), Snap::Round);
+            ..arms()
+        }
+        .without_arms();
+        let img = render(&c, stretched());
         assert_exact(&img, &[(-2, -1, 2, 2)], GREEN);
     }
 
     #[test]
     fn outline_surrounds_fill() {
         let c = Crosshair {
-            arms: None,
             dot: Some(Dot { size: 2.0 }),
             outline: Some(Outline {
                 thickness: 1.0,
                 color: Color::BLACK,
             }),
-            ..Crosshair::default()
-        };
-        let img = render(&c, Scale::ONE, Snap::Round);
+            ..arms()
+        }
+        .without_arms();
+        let img = render(&c, Scale::ONE);
         let (cx, cy) = (img.width / 2, img.height / 2);
         assert_eq!(img.pixel(cx, cy), GREEN);
         assert_eq!(img.pixel(cx - 1, cy - 1), GREEN);
@@ -293,7 +298,7 @@ mod tests {
             opacity: 0.5,
             ..arms()
         };
-        let img = render(&c, Scale::ONE, Snap::Round);
+        let img = render(&c, Scale::ONE);
         let [b, g, r, a] = img.pixel(img.width / 2 + 3, img.height / 2);
         assert_eq!((b, r), (0, 0));
         assert!((127..=128).contains(&a), "alpha {a}");
@@ -307,9 +312,10 @@ mod tests {
                 radius: 10.0,
                 thickness: 1.0,
             }),
-            ..Crosshair::default()
+            outline: Some(Outline::DEFAULT),
+            ..arms()
         };
-        let img = render(&c, stretched(), Snap::Round);
+        let img = render(&c, stretched());
         assert_eq!(img.width % 2, 0);
         assert_eq!(img.height % 2, 0);
         let edge_clear = (0..img.width)

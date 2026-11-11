@@ -4,108 +4,140 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Chord, Crosshair, Key, ScaleMode, Snap};
+use crate::{Chord, Crosshair, Resolution, presets};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub general: General,
-    #[serde(default)]
-    pub programs: Programs,
-    #[serde(default, rename = "profile")]
-    pub profiles: Vec<Profile>,
-    #[serde(default, rename = "binding")]
-    pub bindings: Vec<Binding>,
+    /// Used in every program that isn't a listed game, when `general.show` allows it.
+    #[serde(default = "Game::other_programs")]
+    pub other_programs: Game,
+    #[serde(default, rename = "game", skip_serializing_if = "Vec::is_empty")]
+    pub games: Vec<Game>,
+    /// Custom crosshairs. Built-in ones come from `presets`.
+    #[serde(default, rename = "crosshair", skip_serializing_if = "Vec::is_empty")]
+    pub crosshairs: Vec<Crosshair>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct General {
-    /// Shows/hides crossz everywhere, even outside matched programs.
+    pub show: Show,
+    /// Shows/hides crossz everywhere, in any program.
     pub master_toggle: Option<Chord>,
     /// Hides the overlay from screenshots, OBS and other capture.
     pub exclude_from_capture: bool,
+    pub start_with_windows: bool,
+    /// Start in the tray without opening the settings window.
+    pub start_minimized: bool,
+    pub check_for_updates: bool,
 }
 
 impl Default for General {
     fn default() -> Self {
         General {
+            show: Show::default(),
             master_toggle: "Ctrl+Alt+X".parse().ok(),
             exclude_from_capture: false,
+            start_with_windows: true,
+            start_minimized: true,
+            check_for_updates: true,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Programs {
-    pub mode: ProgramMode,
-    /// Profile used when no rule names one. Empty means the first profile.
-    pub default_profile: String,
-    #[serde(rename = "rule")]
-    pub rules: Vec<ProgramRule>,
-}
-
-impl Default for Programs {
-    fn default() -> Self {
-        Programs {
-            mode: ProgramMode::Whitelist,
-            default_profile: String::new(),
-            rules: Vec::new(),
-        }
-    }
-}
-
+/// Where the crosshair shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProgramMode {
-    /// Show only while a listed program is in the foreground.
+pub enum Show {
+    /// Only while a listed game is in the foreground.
     #[default]
-    Whitelist,
-    /// Show everywhere except while a listed program is in the foreground.
-    Blacklist,
-    /// Show everywhere; rules only pick profiles.
-    Always,
+    InGames,
+    /// Everywhere except while a listed game is in the foreground.
+    ExceptListed,
+    /// Everywhere; listed games get their own settings.
+    Everywhere,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// How crossz behaves in one program.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProgramRule {
-    /// Executable file name, e.g. `cs2.exe`. Compared case-insensitively.
+pub struct Game {
+    /// Executable file name, e.g. `RustClient.exe`, compared case-insensitively.
+    /// Empty for `Config::other_programs`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exe: String,
+    /// Display name, e.g. the window title when it was added.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Full path when known, to show the program's icon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<String>,
-    #[serde(default = "enabled", skip_serializing_if = "is_enabled")]
+    pub path: Option<String>,
+    #[serde(default = "enabled", skip_serializing_if = "is_true")]
     pub enabled: bool,
+    /// Name of a custom or built-in crosshair.
+    #[serde(default = "default_crosshair")]
+    pub crosshair: String,
+    #[serde(default)]
+    pub resolution: Resolution,
+    /// Whether the game shows black bars instead of stretching to fill the screen.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub black_bars: bool,
+    /// Screen-pixel nudge from the center, `[x, y]`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: [i32; 2],
+    #[serde(default, rename = "binding", skip_serializing_if = "Vec::is_empty")]
+    pub bindings: Vec<Binding>,
 }
 
-impl ProgramRule {
+impl Game {
+    pub fn new(exe: impl Into<String>) -> Game {
+        Game {
+            exe: exe.into(),
+            name: String::new(),
+            path: None,
+            enabled: true,
+            crosshair: default_crosshair(),
+            resolution: Resolution::Native,
+            black_bars: false,
+            offset: [0, 0],
+            bindings: Vec::new(),
+        }
+    }
+
+    pub fn other_programs() -> Game {
+        Game::new("")
+    }
+
     pub fn matches(&self, exe: &str) -> bool {
         self.enabled && self.exe.eq_ignore_ascii_case(exe)
     }
+
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.exe
+        } else {
+            &self.name
+        }
+    }
+}
+
+fn default_crosshair() -> String {
+    presets::all()[0].name.clone()
 }
 
 fn enabled() -> bool {
     true
 }
 
-fn is_enabled(b: &bool) -> bool {
+fn is_true(b: &bool) -> bool {
     *b
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Profile {
-    pub name: String,
-    #[serde(default)]
-    pub scale: ScaleMode,
-    #[serde(default)]
-    pub snap: Snap,
-    /// Screen-pixel nudge from the center, `[x, y]`.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub offset: [i32; 2],
-    pub crosshair: Crosshair,
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn is_zero(o: &[i32; 2]) -> bool {
@@ -125,8 +157,7 @@ pub enum Action {
     Toggle,
     HoldToHide,
     HoldToShow,
-    CycleProfile,
-    SetProfile(String),
+    SetCrosshair(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -144,40 +175,22 @@ pub enum Error {
 
 impl Default for Config {
     fn default() -> Self {
+        let mut rust = Game::new("RustClient.exe");
+        rust.name = "Rust".into();
+        rust.crosshair = "Dot".into();
+        rust.bindings.push(Binding {
+            trigger: Chord::key(crate::Key::MOUSE2),
+            action: Action::HoldToHide,
+        });
+        let mut cs2 = Game::new("cs2.exe");
+        cs2.name = "Counter-Strike 2".into();
+        cs2.crosshair = "Plus with gap".into();
+        cs2.resolution = Resolution::custom(1280, 960);
         Config {
             general: General::default(),
-            programs: Programs {
-                mode: ProgramMode::Whitelist,
-                default_profile: "Native".into(),
-                rules: vec![ProgramRule {
-                    exe: "cs2.exe".into(),
-                    profile: Some("Stretched 1280x960".into()),
-                    enabled: true,
-                }],
-            },
-            profiles: vec![
-                Profile {
-                    name: "Native".into(),
-                    scale: ScaleMode::Native,
-                    snap: Snap::Round,
-                    offset: [0, 0],
-                    crosshair: Crosshair::default(),
-                },
-                Profile {
-                    name: "Stretched 1280x960".into(),
-                    scale: ScaleMode::Stretched {
-                        width: 1280,
-                        height: 960,
-                    },
-                    snap: Snap::Round,
-                    offset: [0, 0],
-                    crosshair: Crosshair::default(),
-                },
-            ],
-            bindings: vec![Binding {
-                trigger: Chord::key(Key::from_name("F8").expect("F8 is a key")),
-                action: Action::Toggle,
-            }],
+            other_programs: Game::other_programs(),
+            games: vec![rust, cs2],
+            crosshairs: Vec::new(),
         }
     }
 }
@@ -193,13 +206,14 @@ impl Config {
     }
 
     /// Loads `path`, writing the default config there first if it doesn't exist.
-    pub fn load_or_create(path: &Path) -> Result<Config, Error> {
+    /// The flag says whether the file was just created.
+    pub fn load_or_create(path: &Path) -> Result<(Config, bool), Error> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Config::parse(&text, path),
+            Ok(text) => Ok((Config::parse(&text, path)?, false)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 let config = Config::default();
                 config.save(path)?;
-                Ok(config)
+                Ok((config, true))
             }
             Err(source) => Err(Error::Io {
                 path: path.to_owned(),
@@ -224,50 +238,65 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
-        if self.profiles.is_empty() {
-            return Err(Error::Invalid("add at least one [[profile]]".into()));
-        }
+        let invalid = |message: String| Err(Error::Invalid(message));
         let mut names = HashSet::new();
-        for p in &self.profiles {
-            if !names.insert(p.name.as_str()) {
-                return Err(Error::Invalid(format!(
-                    "two profiles are named {:?}",
-                    p.name
-                )));
+        for c in &self.crosshairs {
+            if c.name.trim().is_empty() {
+                return invalid("a crosshair has no name".into());
+            }
+            if presets::is_preset(&c.name) {
+                return invalid(format!("{:?} is the name of a built-in crosshair", c.name));
+            }
+            if !names.insert(c.name.as_str()) {
+                return invalid(format!("two crosshairs are named {:?}", c.name));
             }
         }
-        let known = |name: &str, what: &str| {
-            if names.contains(name) {
-                Ok(())
+        let mut exes = HashSet::new();
+        for game in &self.games {
+            if game.exe.trim().is_empty() {
+                return invalid("a [[game]] has no exe".into());
+            }
+            if !exes.insert(game.exe.to_ascii_lowercase()) {
+                return invalid(format!("{} is listed twice", game.exe));
+            }
+        }
+        for game in self.games.iter().chain([&self.other_programs]) {
+            let place = if game.exe.is_empty() {
+                "other_programs".to_owned()
             } else {
-                Err(Error::Invalid(format!(
-                    "{what} uses unknown profile {name:?}"
-                )))
+                game.exe.clone()
+            };
+            let known = |name: &str| self.crosshair(name).is_some();
+            if !known(&game.crosshair) {
+                return invalid(format!(
+                    "{place} uses unknown crosshair {:?}",
+                    game.crosshair
+                ));
             }
-        };
-        if !self.programs.default_profile.is_empty() {
-            known(&self.programs.default_profile, "default_profile")?;
-        }
-        for rule in &self.programs.rules {
-            if let Some(p) = &rule.profile {
-                known(p, &format!("rule for {}", rule.exe))?;
-            }
-        }
-        for b in &self.bindings {
-            if let Action::SetProfile(p) = &b.action {
-                known(p, &format!("binding {}", b.trigger))?;
+            for b in &game.bindings {
+                if let Action::SetCrosshair(name) = &b.action
+                    && !known(name)
+                {
+                    return invalid(format!(
+                        "binding {} in {place} uses unknown crosshair {name:?}",
+                        b.trigger
+                    ));
+                }
             }
         }
         Ok(())
     }
 
-    pub fn profile(&self, name: &str) -> Option<&Profile> {
-        self.profiles.iter().find(|p| p.name == name)
+    /// A custom crosshair, or a built-in one.
+    pub fn crosshair(&self, name: &str) -> Option<&Crosshair> {
+        (self.crosshairs.iter())
+            .find(|c| c.name == name)
+            .or_else(|| presets::get(name))
     }
 
-    pub fn default_profile(&self) -> Option<&Profile> {
-        self.profile(&self.programs.default_profile)
-            .or(self.profiles.first())
+    /// Every crosshair a game can use: built-in ones first, then custom ones.
+    pub fn all_crosshairs(&self) -> impl Iterator<Item = &Crosshair> {
+        presets::all().iter().chain(&self.crosshairs)
     }
 }
 
@@ -287,76 +316,69 @@ mod tests {
     }
 
     #[test]
+    fn empty_file_is_valid() {
+        let config = parse("").unwrap();
+        assert!(config.games.is_empty());
+        assert_eq!(config.other_programs.crosshair, "Plus");
+    }
+
+    #[test]
     fn reads_handwritten_config() {
         let config = parse(
             r##"
             [general]
+            show = "everywhere"
             master_toggle = "Ctrl+Shift+F1"
 
-            [programs]
-            mode = "blacklist"
+            [other_programs]
+            crosshair = "Dot"
 
-            [[programs.rule]]
-            exe = "explorer.exe"
+            [[game]]
+            exe = "RustClient.exe"
+            crosshair = "mine"
+            resolution = "1280x960"
+            black_bars = true
 
-            [[profile]]
-            name = "cs"
-            scale = { mode = "stretched", width = 1280, height = 960 }
-            offset = [1, 0]
-
-            [profile.crosshair]
-            color = "#ff00ff"
-            dot = { size = 2 }
-
-            [[binding]]
+            [[game.binding]]
             trigger = "Mouse2"
             action = "hold_to_hide"
 
-            [[binding]]
+            [[game.binding]]
             trigger = "F6"
-            action = { set_profile = "cs" }
+            action = { set_crosshair = "Plus" }
+
+            [[crosshair]]
+            name = "mine"
+            color = "#ff00ff"
+            dot = { size = 2 }
             "##,
         )
         .unwrap();
-        assert_eq!(config.programs.mode, ProgramMode::Blacklist);
-        assert!(config.programs.rules[0].enabled);
-        assert_eq!(config.profiles[0].offset, [1, 0]);
-        assert_eq!(config.profiles[0].crosshair.opacity, 1.0);
-        assert_eq!(config.bindings[1].action, Action::SetProfile("cs".into()));
-        assert_eq!(config.default_profile().unwrap().name, "cs");
+        assert_eq!(config.general.show, Show::Everywhere);
+        let rust = &config.games[0];
+        assert!(rust.enabled);
+        assert_eq!(rust.resolution, Resolution::custom(1280, 960));
+        assert_eq!(rust.bindings[1].action, Action::SetCrosshair("Plus".into()));
+        assert_eq!(config.crosshair("mine").unwrap().opacity, 1.0);
+        assert_eq!(config.crosshair("Dot").unwrap().name, "Dot");
     }
 
     #[test]
-    fn rejects_unknown_profile_reference() {
-        let err = parse(
-            r##"
-            [[programs.rule]]
-            exe = "cs2.exe"
-            profile = "nope"
-
-            [[profile]]
-            name = "a"
-            crosshair = { color = "#ffffff" }
-            "##,
-        )
-        .unwrap_err();
+    fn rejects_unknown_crosshair() {
+        let err = parse("[[game]]\nexe = \"a.exe\"\ncrosshair = \"nope\"").unwrap_err();
         assert!(err.to_string().contains("nope"), "{err}");
     }
 
     #[test]
-    fn rejects_duplicate_profiles() {
-        let p = r##"
-            [[profile]]
-            name = "a"
-            crosshair = { color = "#ffffff" }
-        "##;
-        assert!(parse(&format!("{p}{p}")).is_err());
+    fn rejects_custom_crosshair_named_like_a_preset() {
+        let err = parse("[[crosshair]]\nname = \"Dot\"\ncolor = \"#ffffff\"").unwrap_err();
+        assert!(err.to_string().contains("built-in"), "{err}");
     }
 
     #[test]
-    fn requires_a_profile() {
-        let err = parse("").unwrap_err();
-        assert!(err.to_string().contains("profile"), "{err}");
+    fn rejects_duplicate_games() {
+        let game = "[[game]]\nexe = \"a.exe\"\ncrosshair = \"Dot\"\n";
+        assert!(parse(&format!("{game}{}", game.replace("a.exe", "A.EXE"))).is_err());
     }
 
     #[test]
@@ -368,9 +390,10 @@ mod tests {
     fn save_then_load() {
         let dir = std::env::temp_dir().join(format!("crossz-test-{}", std::process::id()));
         let path = dir.join("config.toml");
-        let created = Config::load_or_create(&path).unwrap();
+        let (created, new) = Config::load_or_create(&path).unwrap();
+        assert!(new);
         assert_eq!(created, Config::default());
-        assert_eq!(Config::load_or_create(&path).unwrap(), created);
+        assert_eq!(Config::load_or_create(&path).unwrap(), (created, false));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

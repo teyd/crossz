@@ -1,25 +1,28 @@
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
-/// How a profile maps its virtual resolution onto the game's real resolution.
+/// The resolution a game renders at, written `native` or like `1280x960` in config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ScaleMode {
-    /// Crosshair pixels are screen pixels.
+#[serde(try_from = "String", into = "String")]
+pub enum Resolution {
     #[default]
     Native,
-    /// Independent X/Y scale, like a 4:3 game stretched over a 16:9 screen.
-    Stretched { width: u32, height: u32 },
-    /// One scale taken from the height, like a 4:3 game with black bars.
-    Uniform { height: u32 },
+    Custom {
+        width: u32,
+        height: u32,
+    },
 }
 
-pub const PRESETS: &[(u32, u32)] = &[
-    (1280, 960),
-    (1440, 1080),
-    (1024, 768),
-    (1280, 1024),
-    (1600, 1200),
-    (1920, 1440),
+/// The resolutions offered in the UI; anything else can still be typed in.
+pub const COMMON: &[Resolution] = &[
+    Resolution::Native,
+    Resolution::custom(1920, 1080),
+    Resolution::custom(1440, 1080),
+    Resolution::custom(1280, 960),
+    Resolution::custom(1280, 1024),
+    Resolution::custom(1024, 768),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,20 +35,71 @@ impl Scale {
     pub const ONE: Scale = Scale { x: 1.0, y: 1.0 };
 }
 
-impl ScaleMode {
-    pub fn scale(self, screen_w: u32, screen_h: u32) -> Scale {
-        let ratio = |screen: u32, virt: u32| screen as f32 / virt.max(1) as f32;
-        match self {
-            ScaleMode::Native => Scale::ONE,
-            ScaleMode::Stretched { width, height } => Scale {
-                x: ratio(screen_w, width),
-                y: ratio(screen_h, height),
-            },
-            ScaleMode::Uniform { height } => {
-                let s = ratio(screen_h, height);
-                Scale { x: s, y: s }
-            }
+impl Resolution {
+    pub const fn custom(width: u32, height: u32) -> Resolution {
+        Resolution::Custom { width, height }
+    }
+
+    /// How much one game pixel grows on a `screen_w`×`screen_h` screen. A lower
+    /// resolution stretched over the screen scales each axis on its own, so a 4:3
+    /// crosshair on 16:9 gets wider; with black bars both axes follow the height.
+    pub fn scale(self, screen_w: u32, screen_h: u32, black_bars: bool) -> Scale {
+        let Resolution::Custom { width, height } = self else {
+            return Scale::ONE;
+        };
+        let ratio = |screen: u32, game: u32| screen as f32 / game.max(1) as f32;
+        let y = ratio(screen_h, height);
+        let x = if black_bars {
+            y
+        } else {
+            ratio(screen_w, width)
+        };
+        Scale { x, y }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid resolution {0:?}, expected native or WIDTHxHEIGHT like 1280x960")]
+pub struct ParseResolutionError(String);
+
+impl FromStr for Resolution {
+    type Err = ParseResolutionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let err = || ParseResolutionError(s.to_owned());
+        if s.trim().eq_ignore_ascii_case("native") {
+            return Ok(Resolution::Native);
         }
+        let (w, h) = s.split_once(['x', 'X', '×']).ok_or_else(err)?;
+        let width: u32 = w.trim().parse().map_err(|_| err())?;
+        let height: u32 = h.trim().parse().map_err(|_| err())?;
+        if width == 0 || height == 0 {
+            return Err(err());
+        }
+        Ok(Resolution::custom(width, height))
+    }
+}
+
+impl fmt::Display for Resolution {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Resolution::Native => f.write_str("native"),
+            Resolution::Custom { width, height } => write!(f, "{width}x{height}"),
+        }
+    }
+}
+
+impl TryFrom<String> for Resolution {
+    type Error = ParseResolutionError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl From<Resolution> for String {
+    fn from(r: Resolution) -> String {
+        r.to_string()
     }
 }
 
@@ -103,22 +157,38 @@ mod tests {
 
     #[test]
     fn stretched_1280x960_on_1440p() {
-        let mode = ScaleMode::Stretched {
-            width: 1280,
-            height: 960,
-        };
-        assert_eq!(mode.scale(2560, 1440), Scale { x: 2.0, y: 1.5 });
+        let r = Resolution::custom(1280, 960);
+        assert_eq!(r.scale(2560, 1440, false), Scale { x: 2.0, y: 1.5 });
     }
 
     #[test]
-    fn uniform_uses_height() {
-        let mode = ScaleMode::Uniform { height: 960 };
-        assert_eq!(mode.scale(2560, 1440), Scale { x: 1.5, y: 1.5 });
+    fn black_bars_use_height() {
+        let r = Resolution::custom(1280, 960);
+        assert_eq!(r.scale(2560, 1440, true), Scale { x: 1.5, y: 1.5 });
+    }
+
+    #[test]
+    fn same_aspect_is_uniform() {
+        let r = Resolution::custom(1280, 720);
+        assert_eq!(r.scale(2560, 1440, false), Scale { x: 2.0, y: 2.0 });
     }
 
     #[test]
     fn native_ignores_screen() {
-        assert_eq!(ScaleMode::Native.scale(2560, 1440), Scale::ONE);
+        assert_eq!(Resolution::Native.scale(2560, 1440, false), Scale::ONE);
+    }
+
+    #[test]
+    fn parses_and_prints() {
+        for s in ["native", "1280x960", "1920x1080"] {
+            assert_eq!(s.parse::<Resolution>().unwrap().to_string(), s);
+        }
+        assert_eq!(
+            "1280 × 960".parse::<Resolution>().unwrap(),
+            Resolution::custom(1280, 960)
+        );
+        assert!("0x960".parse::<Resolution>().is_err());
+        assert!("big".parse::<Resolution>().is_err());
     }
 
     #[test]

@@ -3,8 +3,11 @@
 //! Compiles to nothing on other platforms.
 #![cfg(windows)]
 
+pub mod autostart;
 mod foreground;
 mod input;
+pub mod instance;
+mod programs;
 mod runner;
 mod window;
 
@@ -18,10 +21,10 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
-pub use foreground::visible_programs;
+pub use programs::{Icon, Program, icon, running_programs};
 
 pub enum Command {
-    SetConfig(Config),
+    SetConfig(Box<Config>),
     SetEnabled(bool),
     Quit,
 }
