@@ -1,0 +1,15 @@
+name: Feature request
+description: Suggest something new
+labels: [enhancement]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What do you want to do?
+      description: Describe the problem, not just the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could crossz do it?

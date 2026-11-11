@@ -1,0 +1,36 @@
+# Rust itself is pinned in rust-toolchain.toml so plain rustup users get the same toolchain.
+[tools]
+node = "26"
+"github:rust-cross/cargo-xwin" = "0.23.1"
+
+[tasks.fmt]
+description = "Format everything"
+run = "cargo fmt --all"
+
+[tasks.core]
+description = "Format check, lint and test the platform-independent core"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy -p crossz-core --all-targets -- -D warnings",
+  "cargo test -p crossz-core",
+]
+
+[tasks.win]
+description = "Lint, test and build the Windows crates (on Windows; core tests run in `core`)"
+run = [
+  "cargo clippy --workspace --all-targets -- -D warnings",
+  "cargo test --workspace --exclude crossz-core",
+  "cargo build --release -p crossz",
+]
+
+[tasks.check-win]
+description = "Cross-check the Windows crates from macOS/Linux"
+run = "cargo xwin clippy -p crossz-overlay-win --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
+
+[tasks.ci]
+description = "Everything CI checks that runs locally"
+depends = ["core", "check-win"]
+
+[tasks.run]
+description = "Run crossz"
+run = "cargo run -p crossz"
