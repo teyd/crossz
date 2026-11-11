@@ -24,8 +24,8 @@ run = [
 ]
 
 [tasks.check-win]
-description = "Cross-check the Windows crates from macOS/Linux"
-run = "cargo xwin clippy -p crossz-overlay-win -p crossz --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
+description = "Cross-check the Win32 overlay from macOS/Linux (the app needs llvm-rc; CI builds it on Windows)"
+run = "cargo xwin clippy -p crossz-overlay-win --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
 
 [tasks.ci]
 description = "Everything CI checks that runs locally"

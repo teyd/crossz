@@ -8,10 +8,14 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-channel = "2"
 crossz-core.workspace = true
 crossz-overlay-win.workspace = true
 dirs = "7"
+gpui-kit = "0.9"
+image = { version = "0.25", default-features = false }
 notify = "8"
+tray-icon = "0.26"
 
 [lints]
 workspace = true

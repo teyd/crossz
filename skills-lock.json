@@ -6,6 +6,18 @@
       "sourceType": "github",
       "skillPath": "skills/github-actions-efficiency/SKILL.md",
       "computedHash": "1e29703ead16150c7a746ba4eaba1680239636f3da1a616adf4a58b06943c874"
+    },
+    "gpui-kit": {
+      "source": "longbridge/gpui-kit",
+      "sourceType": "github",
+      "skillPath": "skills/gpui-kit/SKILL.md",
+      "computedHash": "7937677fffbacfd370551a5fa531a2fa6241509ae4b6e715bd9521d5e734e04e"
+    },
+    "gpui-kit-design-guides": {
+      "source": "longbridge/gpui-kit",
+      "sourceType": "github",
+      "skillPath": "skills/gpui-kit-design-guides/SKILL.md",
+      "computedHash": "20d2e41da0baab7881683869cec2ddeea6fb01ce429a84eb6de968883d53e7ca"
     }
   }
 }

@@ -224,6 +224,9 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        if self.profiles.is_empty() {
+            return Err(Error::Invalid("add at least one [[profile]]".into()));
+        }
         let mut names = HashSet::new();
         for p in &self.profiles {
             if !names.insert(p.name.as_str()) {
@@ -326,11 +329,15 @@ mod tests {
     #[test]
     fn rejects_unknown_profile_reference() {
         let err = parse(
-            r#"
+            r##"
             [[programs.rule]]
             exe = "cs2.exe"
             profile = "nope"
-            "#,
+
+            [[profile]]
+            name = "a"
+            crosshair = { color = "#ffffff" }
+            "##,
         )
         .unwrap_err();
         assert!(err.to_string().contains("nope"), "{err}");
@@ -344,6 +351,12 @@ mod tests {
             crosshair = { color = "#ffffff" }
         "##;
         assert!(parse(&format!("{p}{p}")).is_err());
+    }
+
+    #[test]
+    fn requires_a_profile() {
+        let err = parse("").unwrap_err();
+        assert!(err.to_string().contains("profile"), "{err}");
     }
 
     #[test]
