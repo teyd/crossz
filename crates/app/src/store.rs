@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crossz_core::{Action, Config, Profile};
+use crossz_core::{Action, Config, Crosshair, Game, presets};
 use gpui_kit::{App, Global};
 
 /// The config being edited, shared by every part of the UI. The file on disk is the
@@ -8,33 +8,62 @@ use gpui_kit::{App, Global};
 pub struct Store {
     pub config: Config,
     pub path: PathBuf,
-    /// Index of the profile shown in the crosshair editor.
-    pub editing: usize,
     /// Why the last edit or file change wasn't applied.
     pub error: Option<String>,
-    pub preview_resolution: (u32, u32),
+    /// Game being edited: an index into `config.games`, or `None` for other programs.
+    pub selected_game: Option<usize>,
+    /// Crosshair shown in the preview and the crosshair editor.
+    pub selected_crosshair: String,
+    /// Screen size the preview pretends to be.
+    pub screen: (u32, u32),
 }
 
 impl Global for Store {}
 
 impl Store {
     pub fn new(config: Config, path: PathBuf) -> Store {
-        Store {
+        let selected_game = (!config.games.is_empty()).then_some(0);
+        let mut store = Store {
             config,
             path,
-            editing: 0,
             error: None,
-            preview_resolution: (2560, 1440),
-        }
+            selected_game,
+            selected_crosshair: String::new(),
+            screen: (2560, 1440),
+        };
+        store.selected_crosshair = store.game().crosshair.clone();
+        store
     }
 
     pub fn get(cx: &App) -> &Store {
         cx.global::<Store>()
     }
 
-    pub fn profile(cx: &App) -> &Profile {
-        let store = Store::get(cx);
-        &store.config.profiles[store.editing.min(store.config.profiles.len() - 1)]
+    pub fn game(&self) -> &Game {
+        (self.selected_game)
+            .and_then(|i| self.config.games.get(i))
+            .unwrap_or(&self.config.other_programs)
+    }
+
+    /// The selected crosshair, falling back to the first built-in one.
+    pub fn crosshair(&self) -> &Crosshair {
+        (self.config.crosshair(&self.selected_crosshair)).unwrap_or(&presets::all()[0])
+    }
+
+    pub fn crosshair_is_custom(&self) -> bool {
+        (self.config.crosshairs.iter()).any(|c| c.name == self.selected_crosshair)
+    }
+
+    pub fn select_game(cx: &mut App, game: Option<usize>) {
+        let store = cx.global_mut::<Store>();
+        store.selected_game = game;
+        store.selected_crosshair = store.game().crosshair.clone();
+        cx.refresh_windows();
+    }
+
+    pub fn select_crosshair(cx: &mut App, name: String) {
+        cx.global_mut::<Store>().selected_crosshair = name;
+        cx.refresh_windows();
     }
 
     /// Applies `change` to the config, then validates and saves it. An invalid result is
@@ -42,15 +71,6 @@ impl Store {
     pub fn edit(cx: &mut App, change: impl FnOnce(&mut Config)) {
         let mut config = Store::get(cx).config.clone();
         change(&mut config);
-        Store::set(cx, config);
-    }
-
-    pub fn edit_profile(cx: &mut App, change: impl FnOnce(&mut Profile)) {
-        let editing = Store::get(cx).editing;
-        Store::edit(cx, |config| change(&mut config.profiles[editing]));
-    }
-
-    fn set(cx: &mut App, config: Config) {
         if config == Store::get(cx).config {
             return;
         }
@@ -60,8 +80,29 @@ impl Store {
         let store = cx.global_mut::<Store>();
         store.error = result.err().map(|e| e.to_string());
         store.config = config;
+        store.clamp_selection();
         crate::overlay::apply(cx);
         cx.refresh_windows();
+    }
+
+    pub fn edit_game(cx: &mut App, change: impl FnOnce(&mut Game)) {
+        let selected = Store::get(cx).selected_game;
+        Store::edit(cx, |config| {
+            match selected.and_then(|i| config.games.get_mut(i)) {
+                Some(game) => change(game),
+                None => change(&mut config.other_programs),
+            }
+        });
+    }
+
+    /// Edits the selected crosshair if it's a custom one; built-in ones can't change.
+    pub fn edit_crosshair(cx: &mut App, change: impl FnOnce(&mut Crosshair)) {
+        let name = Store::get(cx).selected_crosshair.clone();
+        Store::edit(cx, |config| {
+            if let Some(c) = config.crosshairs.iter_mut().find(|c| c.name == name) {
+                change(c);
+            }
+        });
     }
 
     /// Takes a config that changed on disk, e.g. edited by hand.
@@ -69,8 +110,8 @@ impl Store {
         let store = cx.global_mut::<Store>();
         store.error = None;
         if store.config != config {
-            store.editing = store.editing.min(config.profiles.len().saturating_sub(1));
             store.config = config;
+            store.clamp_selection();
             crate::overlay::apply(cx);
         }
         cx.refresh_windows();
@@ -80,101 +121,105 @@ impl Store {
         cx.global_mut::<Store>().error = Some(error);
         cx.refresh_windows();
     }
-}
 
-/// Renames a profile and every reference to it.
-pub fn rename_profile(config: &mut Config, from: &str, to: &str) {
-    let rename = |name: &mut String| {
-        if name == from {
-            *name = to.to_owned();
+    fn clamp_selection(&mut self) {
+        if self
+            .selected_game
+            .is_some_and(|i| i >= self.config.games.len())
+        {
+            self.selected_game = self.config.games.len().checked_sub(1);
         }
-    };
-    for profile in &mut config.profiles {
-        rename(&mut profile.name);
-    }
-    rename(&mut config.programs.default_profile);
-    for rule in &mut config.programs.rules {
-        if let Some(name) = &mut rule.profile {
-            rename(name);
-        }
-    }
-    for binding in &mut config.bindings {
-        if let Action::SetProfile(name) = &mut binding.action {
-            rename(name);
+        if self.config.crosshair(&self.selected_crosshair).is_none() {
+            self.selected_crosshair = self.game().crosshair.clone();
         }
     }
 }
 
-/// Removes a profile; references to it fall back to the default profile.
-pub fn remove_profile(config: &mut Config, index: usize) {
-    let name = config.profiles.remove(index).name;
-    if config.programs.default_profile == name {
-        config.programs.default_profile.clear();
-    }
-    for rule in &mut config.programs.rules {
-        if rule.profile.as_deref() == Some(&name) {
-            rule.profile = None;
+/// Renames a custom crosshair and every reference to it.
+pub fn rename_crosshair(config: &mut Config, from: &str, to: &str) {
+    for c in &mut config.crosshairs {
+        if c.name == from {
+            c.name = to.to_owned();
         }
     }
-    config
-        .bindings
-        .retain(|b| b.action != Action::SetProfile(name.clone()));
+    replace_references(config, from, to);
 }
 
-/// `base`, or `base 2`, `base 3`… whichever isn't a profile name yet.
+/// Removes a custom crosshair; games using it fall back to the first built-in one.
+pub fn remove_crosshair(config: &mut Config, name: &str) {
+    config.crosshairs.retain(|c| c.name != name);
+    let fallback = presets::all()[0].name.clone();
+    replace_references(config, name, &fallback);
+}
+
+fn replace_references(config: &mut Config, from: &str, to: &str) {
+    for game in config.games.iter_mut().chain([&mut config.other_programs]) {
+        if game.crosshair == from {
+            game.crosshair = to.to_owned();
+        }
+        for binding in &mut game.bindings {
+            if let Action::SetCrosshair(name) = &mut binding.action
+                && name == from
+            {
+                *name = to.to_owned();
+            }
+        }
+    }
+}
+
+/// `base`, or `base 2`, `base 3`… whichever no crosshair is called yet.
 pub fn unique_name(config: &Config, base: &str) -> String {
     (1..)
         .map(|n| match n {
             1 => base.to_owned(),
             n => format!("{base} {n}"),
         })
-        .find(|name| config.profile(name).is_none())
+        .find(|name| config.crosshair(name).is_none())
         .expect("some suffix is free")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossz_core::{Binding, ProgramRule};
+    use crossz_core::Binding;
 
     fn config() -> Config {
         let mut c = Config::default();
-        c.programs.default_profile = "Native".into();
-        c.programs.rules.push(ProgramRule {
-            exe: "game.exe".into(),
-            profile: Some("Native".into()),
-            enabled: true,
-        });
-        c.bindings.push(Binding {
+        c.crosshairs.push(Crosshair::blank("mine"));
+        c.games[0].crosshair = "mine".into();
+        c.other_programs.bindings.push(Binding {
             trigger: "F6".parse().unwrap(),
-            action: Action::SetProfile("Native".into()),
+            action: Action::SetCrosshair("mine".into()),
         });
+        c.validate().unwrap();
         c
     }
 
     #[test]
     fn rename_updates_references() {
         let mut c = config();
-        rename_profile(&mut c, "Native", "Plain");
+        rename_crosshair(&mut c, "mine", "ours");
         c.validate().unwrap();
-        assert_eq!(c.programs.default_profile, "Plain");
-        assert_eq!(c.programs.rules[1].profile.as_deref(), Some("Plain"));
-        assert_eq!(c.bindings[1].action, Action::SetProfile("Plain".into()));
+        assert_eq!(c.games[0].crosshair, "ours");
+        assert_eq!(
+            c.other_programs.bindings[0].action,
+            Action::SetCrosshair("ours".into())
+        );
     }
 
     #[test]
-    fn remove_drops_references() {
+    fn remove_falls_back_to_a_preset() {
         let mut c = config();
-        remove_profile(&mut c, 0);
+        remove_crosshair(&mut c, "mine");
         c.validate().unwrap();
-        assert_eq!(c.programs.rules[1].profile, None);
-        assert_eq!(c.bindings.len(), 1);
+        assert_eq!(c.games[0].crosshair, presets::all()[0].name);
     }
 
     #[test]
-    fn unique_names() {
+    fn unique_names_skip_presets_and_customs() {
         let c = config();
-        assert_eq!(unique_name(&c, "Native"), "Native 2");
+        assert_eq!(unique_name(&c, "Dot"), "Dot 2");
+        assert_eq!(unique_name(&c, "mine"), "mine 2");
         assert_eq!(unique_name(&c, "New"), "New");
     }
 }

@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crossz_core::{Arms, Color, Crosshair, Image, Outline, Scale, Snap, render};
+use crossz_core::{Arms, Color, Crosshair, Image, Outline, Scale, render};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -9,12 +9,15 @@ use crate::Message;
 pub enum Command {
     OpenSettings,
     SetEnabled(bool),
+    RestartToUpdate,
     Quit,
 }
 
 struct Tray {
     _icon: TrayIcon,
     settings: MenuId,
+    /// Shows the version; becomes "Restart to update" once an update is ready.
+    update: MenuItem,
     enabled: CheckMenuItem,
     quit: MenuId,
 }
@@ -27,10 +30,17 @@ thread_local! {
 pub fn create(messages: async_channel::Sender<Message>) -> tray_icon::Result<()> {
     let settings = MenuItem::new("Settings…", true, None);
     let enabled = CheckMenuItem::new("Enabled", true, true, None);
+    let update = MenuItem::new(format!("crossz {}", crate::updater::VERSION), false, None);
     let quit = MenuItem::new("Quit crossz", true, None);
     let menu = Menu::new();
-    menu.append_items(&[&settings, &enabled, &PredefinedMenuItem::separator(), &quit])
-        .expect("appending tray menu items");
+    menu.append_items(&[
+        &settings,
+        &enabled,
+        &PredefinedMenuItem::separator(),
+        &update,
+        &quit,
+    ])
+    .expect("appending tray menu items");
 
     let icon = TrayIconBuilder::new()
         .with_tooltip("crossz")
@@ -58,6 +68,7 @@ pub fn create(messages: async_channel::Sender<Message>) -> tray_icon::Result<()>
         *tray.borrow_mut() = Some(Tray {
             _icon: icon,
             settings: settings.id().clone(),
+            update,
             enabled,
             quit: quit.id().clone(),
         });
@@ -75,6 +86,8 @@ pub fn command(id: &MenuId) -> Option<Command> {
             Some(Command::OpenSettings)
         } else if id == tray.enabled.id() {
             Some(Command::SetEnabled(tray.enabled.is_checked()))
+        } else if id == tray.update.id() {
+            Some(Command::RestartToUpdate)
         } else if *id == tray.quit {
             Some(Command::Quit)
         } else {
@@ -91,25 +104,42 @@ pub fn set_enabled(enabled: bool) {
     });
 }
 
+pub fn set_update(state: &crate::updater::State) {
+    TRAY.with(|tray| {
+        if let Some(tray) = tray.borrow().as_ref() {
+            match state {
+                crate::updater::State::Ready { version, .. } => {
+                    tray.update
+                        .set_text(format!("Restart to update to {version}"));
+                    tray.update.set_enabled(true);
+                }
+                _ => {
+                    tray.update
+                        .set_text(format!("crossz {}", crate::updater::VERSION));
+                    tray.update.set_enabled(false);
+                }
+            }
+        }
+    });
+}
+
 fn icon() -> Icon {
     const SIZE: u32 = 32;
     let crosshair = Crosshair {
         color: Color::rgb(0x4a, 0xde, 0x80),
-        opacity: 1.0,
         arms: Some(Arms {
             length: 8.0,
             thickness: 4.0,
             gap: 3.0,
             t_style: false,
         }),
-        dot: None,
-        circle: None,
         outline: Some(Outline {
             thickness: 2.0,
             color: Color::BLACK,
         }),
+        ..Crosshair::blank("tray")
     };
-    let image = render(&crosshair, Scale::ONE, Snap::Round);
+    let image = render(&crosshair, Scale::ONE);
     let rgba = straight_rgba(&image, SIZE);
     Icon::from_rgba(rgba, SIZE, SIZE).expect("tray icon buffer matches its size")
 }

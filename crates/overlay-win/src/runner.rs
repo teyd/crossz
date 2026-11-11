@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::sync::mpsc::{Receiver, SyncSender};
 
-use crossz_core::{Config, Engine, Image, Profile, Scale, Target, render};
+use crossz_core::{Config, Crosshair, Engine, Image, Scale, Target, render};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::HiDpi::{
@@ -38,7 +38,7 @@ fn with_runner(f: impl FnOnce(&mut Runner)) {
 }
 
 struct Rendered {
-    profile: Profile,
+    crosshair: Crosshair,
     scale: Scale,
     image: Image,
 }
@@ -185,9 +185,9 @@ impl Runner {
         }
     }
 
-    /// Cheap summary of the engine's decision, to skip redundant updates on key events.
-    fn visible_state(&self) -> Option<(String, Target)> {
-        (self.engine.shown()).map(|s| (s.profile.name.clone(), s.target))
+    /// Summary of the engine's decision, to skip redundant updates on key events.
+    fn visible_state(&self) -> Option<(String, String, Target)> {
+        (self.engine.shown()).map(|s| (s.crosshair.name.clone(), s.game.exe.clone(), s.target))
     }
 
     fn drain_commands(&mut self) {
@@ -195,7 +195,7 @@ impl Runner {
             match command {
                 Command::SetConfig(config) => {
                     window::exclude_from_capture(self.hwnd, config.general.exclude_from_capture);
-                    self.engine.set_config(config);
+                    self.engine.set_config(*config);
                 }
                 Command::SetEnabled(enabled) => {
                     self.engine.set_enabled(enabled);
@@ -223,21 +223,20 @@ impl Runner {
         let target = shown.target;
         let rect = foreground::target_rect(self.foreground, target);
         let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-        let scale = shown.profile.scale.scale(width as u32, height as u32);
+        let game = shown.game;
+        let scale = (game.resolution).scale(width as u32, height as u32, game.black_bars);
+        let [dx, dy] = game.offset;
 
         let stale = (self.rendered.as_ref())
-            .is_none_or(|r| r.profile != *shown.profile || r.scale != scale);
+            .is_none_or(|r| r.crosshair != *shown.crosshair || r.scale != scale);
         if stale {
-            let profile = shown.profile.clone();
-            let image = render(&profile.crosshair, scale, profile.snap);
             self.rendered = Some(Rendered {
-                profile,
+                crosshair: shown.crosshair.clone(),
                 scale,
-                image,
+                image: render(shown.crosshair, scale),
             });
         }
         let rendered = self.rendered.as_ref().expect("rendered above");
-        let [dx, dy] = rendered.profile.offset;
         let position = (
             rect.left + width / 2 - rendered.image.width as i32 / 2 + dx,
             rect.top + height / 2 - rendered.image.height as i32 / 2 + dy,
