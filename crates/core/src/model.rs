@@ -15,6 +15,9 @@ pub struct Crosshair {
     pub snap: Snap,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arms: Option<Arms>,
+    /// A second set of lines further out, like Valorant's outer lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outer: Option<Arms>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dot: Option<Dot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -24,7 +27,7 @@ pub struct Crosshair {
 }
 
 /// Four lines around the center. `gap` is measured from the edge of the center square,
-/// so arms stay symmetric whatever the thickness.
+/// so arms stay symmetric whatever the thickness; a negative gap overlaps it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Arms {
@@ -33,12 +36,16 @@ pub struct Arms {
     pub gap: f32,
     #[serde(default)]
     pub t_style: bool,
+    #[serde(default = "full_opacity", skip_serializing_if = "is_full")]
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dot {
     pub size: f32,
+    #[serde(default = "full_opacity", skip_serializing_if = "is_full")]
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -59,17 +66,25 @@ fn full_opacity() -> f32 {
     1.0
 }
 
+fn is_full(opacity: &f32) -> bool {
+    *opacity == 1.0
+}
+
 impl Arms {
     pub const DEFAULT: Arms = Arms {
         length: 5.0,
         thickness: 2.0,
         gap: 3.0,
         t_style: false,
+        opacity: 1.0,
     };
 }
 
 impl Dot {
-    pub const DEFAULT: Dot = Dot { size: 2.0 };
+    pub const DEFAULT: Dot = Dot {
+        size: 2.0,
+        opacity: 1.0,
+    };
 }
 
 impl Circle {
@@ -95,6 +110,7 @@ impl Crosshair {
             opacity: 1.0,
             snap: Snap::Round,
             arms: None,
+            outer: None,
             dot: None,
             circle: None,
             outline: Some(Outline::DEFAULT),
@@ -103,9 +119,10 @@ impl Crosshair {
 
     /// Furthest distance from the center any part reaches, in game pixels.
     pub fn reach(&self) -> f32 {
-        let arms = self
-            .arms
-            .map_or(0.0, |a| a.thickness / 2.0 + a.gap.max(0.0) + a.length);
+        let lines = |arms: Option<Arms>| {
+            arms.map_or(0.0, |a| a.thickness / 2.0 + a.gap.max(0.0) + a.length)
+        };
+        let arms = lines(self.arms).max(lines(self.outer));
         let dot = self.dot.map_or(0.0, |d| d.size / 2.0);
         let circle = self.circle.map_or(0.0, |c| c.radius + c.thickness / 2.0);
         let outline = self.outline.map_or(0.0, |o| o.thickness);

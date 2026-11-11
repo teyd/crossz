@@ -132,6 +132,7 @@ fn icon() -> Icon {
             thickness: 4.0,
             gap: 3.0,
             t_style: false,
+            opacity: 1.0,
         }),
         outline: Some(Outline {
             thickness: 2.0,

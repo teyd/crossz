@@ -1,4 +1,4 @@
-use tiny_skia::{Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
+use tiny_skia::{Paint, Path, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke, Transform};
 
 use crate::{Color, Crosshair, Scale, Snap};
 
@@ -52,58 +52,60 @@ pub fn render(crosshair: &Crosshair, scale: Scale) -> Image {
     let opacity = crosshair.opacity.clamp(0.0, 1.0);
     let anti_alias = snap == Snap::AntiAlias;
     let rects = rects(crosshair, scale, snap);
+    let center = (cx, cy);
+    let ring = crosshair.circle.and_then(|circle| {
+        // Stroking in game pixels under a non-uniform transform stretches the ring
+        // into an ellipse with thicker sides, just like the stretched game would.
+        let path = PathBuilder::from_circle(0.0, 0.0, circle.radius)?;
+        Some((
+            path,
+            circle.thickness,
+            Transform::from_row(scale.x, 0.0, 0.0, scale.y, cx, cy),
+        ))
+    });
 
-    let mut fill = |span: Span, color: Color| {
-        let rect = Rect::from_ltrb(
-            cx + span.left,
-            cy + span.top,
-            cx + span.right,
-            cy + span.bottom,
-        );
-        if let Some(rect) = rect {
-            pixmap.fill_rect(
-                rect,
-                &paint(color, opacity, anti_alias),
-                Transform::identity(),
-                None,
-            );
-        }
-    };
-    // All outlines go first so one part's outline never covers another part's fill.
+    // Outlines go on their own layer, drawn solid and blended once, so a translucent
+    // outline doesn't get darker where two parts' outlines overlap. They go under every
+    // fill, so one part's outline never covers another part.
     if let Some(outline) = crosshair.outline {
+        let mut layer = Pixmap::new(width, height).expect("same size as the canvas");
+        let solid = Color {
+            a: 255,
+            ..outline.color
+        };
         let x = snap.size(outline.thickness * scale.x);
         let y = snap.size(outline.thickness * scale.y);
-        for &span in &rects {
-            fill(span.expand(x, y), outline.color);
-        }
-    }
-    for &span in &rects {
-        fill(span, crosshair.color);
-    }
-
-    if let Some(circle) = crosshair.circle
-        && let Some(path) = PathBuilder::from_circle(0.0, 0.0, circle.radius)
-    {
-        // Stroking in virtual pixels under a non-uniform transform stretches the ring
-        // into an ellipse with thicker sides, just like the stretched game would.
-        let transform = Transform::from_row(scale.x, 0.0, 0.0, scale.y, cx, cy);
-        let mut stroke = |width: f32, color: Color| {
-            let stroke = Stroke {
-                width,
-                ..Stroke::default()
-            };
-            pixmap.stroke_path(
-                &path,
-                &paint(color, opacity, true),
-                &stroke,
-                transform,
-                None,
+        for &(span, _) in &rects {
+            fill_rect(
+                &mut layer,
+                span.expand(x, y),
+                center,
+                &paint(solid, 1.0, anti_alias),
             );
-        };
-        if let Some(outline) = crosshair.outline {
-            stroke(circle.thickness + outline.thickness * 2.0, outline.color);
         }
-        stroke(circle.thickness, crosshair.color);
+        if let Some((path, thickness, transform)) = &ring {
+            let width = thickness + outline.thickness * 2.0;
+            stroke(
+                &mut layer,
+                path,
+                width,
+                *transform,
+                &paint(solid, 1.0, true),
+            );
+        }
+        let blend = PixmapPaint {
+            opacity: outline.color.a as f32 / 255.0 * opacity,
+            ..PixmapPaint::default()
+        };
+        pixmap.draw_pixmap(0, 0, layer.as_ref(), &blend, Transform::identity(), None);
+    }
+    for &(span, part_opacity) in &rects {
+        let paint = paint(crosshair.color, opacity * part_opacity, anti_alias);
+        fill_rect(&mut pixmap, span, center, &paint);
+    }
+    if let Some((path, thickness, transform)) = &ring {
+        let paint = paint(crosshair.color, opacity, true);
+        stroke(&mut pixmap, path, *thickness, *transform, &paint);
     }
 
     let mut bgra = pixmap.take();
@@ -117,6 +119,26 @@ pub fn render(crosshair: &Crosshair, scale: Scale) -> Image {
     }
 }
 
+fn fill_rect(pixmap: &mut Pixmap, span: Span, (cx, cy): (f32, f32), paint: &Paint) {
+    let rect = Rect::from_ltrb(
+        cx + span.left,
+        cy + span.top,
+        cx + span.right,
+        cy + span.bottom,
+    );
+    if let Some(rect) = rect {
+        pixmap.fill_rect(rect, paint, Transform::identity(), None);
+    }
+}
+
+fn stroke(pixmap: &mut Pixmap, path: &Path, width: f32, transform: Transform, paint: &Paint) {
+    let stroke = Stroke {
+        width,
+        ..Stroke::default()
+    };
+    pixmap.stroke_path(path, paint, &stroke, transform, None);
+}
+
 fn paint(color: Color, opacity: f32, anti_alias: bool) -> Paint<'static> {
     let alpha = (color.a as f32 * opacity).round() as u8;
     let mut paint = Paint::default();
@@ -125,9 +147,10 @@ fn paint(color: Color, opacity: f32, anti_alias: bool) -> Paint<'static> {
     paint
 }
 
-fn rects(crosshair: &Crosshair, scale: Scale, snap: Snap) -> Vec<Span> {
-    let mut rects = Vec::with_capacity(5);
-    if let Some(arms) = crosshair.arms {
+/// Every rectangle to fill, with the opacity of the part it belongs to.
+fn rects(crosshair: &Crosshair, scale: Scale, snap: Snap) -> Vec<(Span, f32)> {
+    let mut rects = Vec::with_capacity(9);
+    for arms in [crosshair.outer, crosshair.arms].into_iter().flatten() {
         // Vertical arms take their width from the X scale, horizontal arms their height from Y.
         let (v_left, v_right) = snap.centered(snap.size(arms.thickness * scale.x));
         let (h_top, h_bottom) = snap.centered(snap.size(arms.thickness * scale.y));
@@ -148,22 +171,24 @@ fn rects(crosshair: &Crosshair, scale: Scale, snap: Snap) -> Vec<Span> {
             right: v_right,
             bottom,
         };
-        rects.push(horizontal(v_left - gap_x - len_x, v_left - gap_x));
-        rects.push(horizontal(v_right + gap_x, v_right + gap_x + len_x));
-        rects.push(vertical(h_bottom + gap_y, h_bottom + gap_y + len_y));
+        let mut push = |span| rects.push((span, arms.opacity));
+        push(horizontal(v_left - gap_x - len_x, v_left - gap_x));
+        push(horizontal(v_right + gap_x, v_right + gap_x + len_x));
+        push(vertical(h_bottom + gap_y, h_bottom + gap_y + len_y));
         if !arms.t_style {
-            rects.push(vertical(h_top - gap_y - len_y, h_top - gap_y));
+            push(vertical(h_top - gap_y - len_y, h_top - gap_y));
         }
     }
     if let Some(dot) = crosshair.dot {
         let (left, right) = snap.centered(snap.size(dot.size * scale.x));
         let (top, bottom) = snap.centered(snap.size(dot.size * scale.y));
-        rects.push(Span {
+        let span = Span {
             left,
             top,
             right,
             bottom,
-        });
+        };
+        rects.push((span, dot.opacity));
     }
     rects
 }
@@ -185,6 +210,7 @@ mod tests {
                 thickness: 2.0,
                 gap: 2.0,
                 t_style: false,
+                opacity: 1.0,
             }),
             outline: None,
             ..Crosshair::blank("test")
@@ -263,7 +289,7 @@ mod tests {
     #[test]
     fn stretched_dot_is_wide() {
         let c = Crosshair {
-            dot: Some(Dot { size: 2.0 }),
+            dot: Some(Dot::DEFAULT),
             outline: None,
             ..arms()
         }
@@ -275,7 +301,7 @@ mod tests {
     #[test]
     fn outline_surrounds_fill() {
         let c = Crosshair {
-            dot: Some(Dot { size: 2.0 }),
+            dot: Some(Dot::DEFAULT),
             outline: Some(Outline {
                 thickness: 1.0,
                 color: Color::BLACK,
@@ -290,6 +316,35 @@ mod tests {
         assert_eq!(img.pixel(cx - 2, cy - 2), BLACK);
         assert_eq!(img.pixel(cx + 1, cy + 1), BLACK);
         assert_eq!(img.pixel(cx + 2, cy + 2), CLEAR);
+    }
+
+    #[test]
+    fn translucent_outlines_dont_stack_where_parts_overlap() {
+        let c = Crosshair {
+            dot: Some(Dot::DEFAULT),
+            outline: Some(Outline {
+                thickness: 1.0,
+                color: Color {
+                    a: 128,
+                    ..Color::BLACK
+                },
+            }),
+            ..arms()
+        };
+        let c = Crosshair {
+            arms: Some(Arms {
+                gap: 0.0,
+                ..c.arms.unwrap()
+            }),
+            ..c
+        };
+        let img = render(&c, Scale::ONE);
+        let (cx, cy) = (img.width / 2, img.height / 2);
+        // Next to where the right arm's and the bottom arm's outlines meet.
+        let corner = img.pixel(cx + 1, cy + 1);
+        let edge = img.pixel(cx + 4, cy + 1);
+        assert_eq!(corner, edge);
+        assert!((127..=128).contains(&edge[3]), "{edge:?}");
     }
 
     #[test]

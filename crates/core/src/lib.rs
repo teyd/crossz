@@ -9,6 +9,7 @@ pub mod model;
 pub mod presets;
 pub mod raster;
 pub mod scale;
+pub mod valorant;
 
 pub use color::Color;
 pub use config::{Action, Binding, Config, Game, General, Show};
