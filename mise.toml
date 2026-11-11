@@ -16,11 +16,10 @@ run = [
 ]
 
 [tasks.win]
-description = "Lint, test and build the Windows crates (on Windows; core tests run in `core`)"
+description = "Lint and test the Windows crates (on Windows; core tests run in `core`)"
 run = [
   "cargo clippy --workspace --all-targets -- -D warnings",
   "cargo test --workspace --exclude crossz-core",
-  "cargo build --release -p crossz",
 ]
 
 [tasks.check-win]
