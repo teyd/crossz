@@ -44,9 +44,17 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main || { echo "Run releases from main, not $GITHUB_REF"; exit 1; }
           crate=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           test "$VERSION" = "$crate" || { echo "Cargo.toml says $crate, not $VERSION"; exit 1; }
-          if gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "v$VERSION is already released"; exit 1
-          fi
+          # Fails unless the API answers a real 404, so an outage can't pass as "absent".
+          must_not_exist() {
+            if out=$(gh api "repos/$GITHUB_REPOSITORY/$1" 2>&1); then
+              echo "$2"; exit 1
+            fi
+            grep -q "HTTP 404" <<<"$out" || { echo "couldn't check $1: $out"; exit 1; }
+          }
+          must_not_exist "releases/tags/v$VERSION" "v$VERSION is already released"
+          # A release on an existing tag keeps that tag's commit and ignores --target,
+          # so the build would be attached to a commit it wasn't built from.
+          must_not_exist "git/ref/tags/v$VERSION" "tag v$VERSION already exists"
       - run: cargo build --release --locked -p crossz
       # The in-app updater reads latest.json from the latest release and checks the
       # exe's size and SHA-256 before installing it.
