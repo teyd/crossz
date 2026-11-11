@@ -6,6 +6,8 @@ Play at native 1440p and keep the crosshair you're used to from stretched 1280×
 
 It's an external click-through window. It doesn't inject into the game or read its memory, and it doesn't work in exclusive fullscreen.
 
+Settings live in `%APPDATA%\crossz\config.toml` and apply as soon as you save.
+
 ## Build
 
 Requires [mise](https://mise.jdx.dev) (or rustup alone; the Rust version is in `rust-toolchain.toml`).
