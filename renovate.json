@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":dependencyDashboard"
+  ],
+  "timezone": "Europe/Berlin",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 5,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "One PR for routine Rust crate updates.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Rust crates"
+    },
+    {
+      "description": "gpui-kit pins its own GPUI snapshot and often breaks APIs; review it on its own.",
+      "matchPackageNames": ["gpui-kit"],
+      "groupName": null
+    },
+    {
+      "description": "One PR for GitHub Actions, kept pinned to commit SHAs.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Pullfrog manages its own workflow file.",
+      "matchFileNames": [".github/workflows/pullfrog.yml"],
+      "enabled": false
+    },
+    {
+      "description": "Tools in mise.toml and the Rust toolchain.",
+      "matchManagers": ["mise", "custom.regex"],
+      "groupName": "Toolchain"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Rust version pinned in rust-toolchain.toml.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/"],
+      "matchStrings": ["channel = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "rust",
+      "packageNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases"
+    }
+  ]
+}
