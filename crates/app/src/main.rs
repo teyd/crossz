@@ -3,6 +3,8 @@
 
 mod assets;
 mod capture;
+#[cfg(unix)]
+mod instance;
 mod overlay;
 mod preview;
 mod store;
@@ -25,6 +27,7 @@ pub enum Message {
     Menu(tray_icon::menu::MenuId),
     Tray(tray::Command),
     Update(updater::State),
+    InputUnavailable,
 }
 
 /// Where the updater is, for the settings window and the tray.
@@ -98,6 +101,18 @@ fn config_path() -> PathBuf {
 
 fn main() {
     let args = args();
+    let (messages, inbox) = async_channel::unbounded();
+    #[cfg(unix)]
+    let _instance = {
+        let messages = messages.clone();
+        let show = move || {
+            let _ = messages.send_blocking(Message::Tray(tray::Command::OpenSettings));
+        };
+        match instance::acquire(show) {
+            Some(instance) => instance,
+            None => return,
+        }
+    };
     #[cfg(windows)]
     let _instance = {
         if let Some(pid) = args.after_update {
@@ -123,7 +138,6 @@ fn main() {
         Err(e) => (Config::default(), false, Some(e.to_string())),
     };
     let show_window = first_run || !(args.hidden || config.general.start_minimized);
-    let (messages, inbox) = async_channel::unbounded();
     watch::spawn(path.clone(), messages.clone());
     #[cfg(windows)]
     {
@@ -196,6 +210,10 @@ fn handle(message: Message, cx: &mut App) {
             }
         }
         Message::Tray(command) => run(command, cx),
+        Message::InputUnavailable => {
+            cx.global_mut::<Store>().input_unavailable = true;
+            cx.refresh_windows();
+        }
         Message::Update(state) => {
             tray::set_update(&state);
             cx.global_mut::<Update>().state = state;

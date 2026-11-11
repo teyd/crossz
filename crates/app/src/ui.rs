@@ -292,6 +292,7 @@ impl Render for SettingsView {
         let crosshairs = crosshairs_page(self, window, cx);
         let this = cx.entity().downgrade();
         let error = Store::get(cx).error.clone();
+        let input_unavailable = Store::get(cx).input_unavailable;
         let ready = match &cx.global::<Update>().state {
             UpdateState::Ready { version, .. } => Some(version.clone()),
             _ => None,
@@ -310,6 +311,7 @@ impl Render for SettingsView {
                     .when_some(error, |this, error| {
                         this.child(Alert::error("config-error", error).banner())
                     })
+                    .when(input_unavailable, |this| this.child(input_banner()))
                     .when_some(ready, |this, version| {
                         this.child(
                             Alert::info("update-ready", format!("crossz {version} is ready."))
@@ -328,6 +330,33 @@ impl Render for SettingsView {
                     ),
             )
     }
+}
+
+/// macOS only reports keys and buttons to apps the user allowed under Input Monitoring.
+fn input_banner() -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .items_center()
+        .gap_2()
+        .pr_3()
+        .child(div().flex_1().child(
+            Alert::warning(
+                "input-permission",
+                "Binds need Input Monitoring permission. Allow crossz, then restart it.",
+            )
+            .banner(),
+        ))
+        .child(
+            Button::new("open-input-monitoring")
+                .small()
+                .outline()
+                .label("Open System Settings")
+                .on_click(|_, _, cx| {
+                    cx.open_url(
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+                    );
+                }),
+        )
 }
 
 fn games_page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -> SettingPage {
@@ -1223,13 +1252,17 @@ fn general_page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -
 
     let startup = SettingGroup::new().title("Startup").items([
         SettingItem::new(
-            "Start with Windows",
+            if cfg!(windows) {
+                "Start with Windows"
+            } else {
+                "Start at login"
+            },
             SettingField::switch(
                 |cx| Store::get(cx).config.general.start_with_windows,
                 |on, cx| Store::edit(cx, |c| c.general.start_with_windows = on),
             ),
         )
-        .description("Starts in the tray when you sign in."),
+        .description("Starts in the tray when you log in."),
         SettingItem::new(
             "Start minimized",
             SettingField::switch(

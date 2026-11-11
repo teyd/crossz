@@ -33,6 +33,8 @@ pub enum Command {
 pub enum Event {
     /// The master toggle changed, from a hotkey or `Command::SetEnabled`.
     EnabledChanged(bool),
+    /// Keys and buttons can't be read. Never happens on Windows; here to match macOS.
+    InputUnavailable,
 }
 
 /// Handle to the overlay thread. Dropping it stops the overlay.

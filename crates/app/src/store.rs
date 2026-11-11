@@ -16,6 +16,8 @@ pub struct Store {
     pub selected_crosshair: String,
     /// Screen size the preview pretends to be.
     pub screen: (u32, u32),
+    /// Binds can't work until the user allows input access (macOS Input Monitoring).
+    pub input_unavailable: bool,
 }
 
 impl Global for Store {}
@@ -30,6 +32,7 @@ impl Store {
             selected_game,
             selected_crosshair: String::new(),
             screen: (2560, 1440),
+            input_unavailable: false,
         };
         store.selected_crosshair = store.game().crosshair.clone();
         store
