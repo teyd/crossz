@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/overlay-win", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/teyd/crossz"
+rust-version = "1.90"
+
+[workspace.dependencies]
+crossz-core = { path = "crates/core" }
+crossz-overlay-win = { path = "crates/overlay-win" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tiny-skia = { version = "0.12", default-features = false, features = ["std"] }
+toml = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
