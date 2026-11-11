@@ -46,6 +46,9 @@ pub fn create(mtm: MainThreadMarker) {
     panel.setBackgroundColor(Some(&NSColor::clearColor()));
     panel.setHasShadow(false);
     panel.setIgnoresMouseEvents(true);
+    // Panels hide whenever their app stops being active, e.g. on switching from the
+    // settings window to the game; the crosshair must stay.
+    panel.setHidesOnDeactivate(false);
     // Above other windows, including fullscreen games in their own Space.
     panel.setLevel(NSScreenSaverWindowLevel);
     panel.setCollectionBehavior(

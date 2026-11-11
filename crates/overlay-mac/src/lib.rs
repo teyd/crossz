@@ -10,7 +10,7 @@ mod programs;
 mod screen;
 mod window;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,6 +44,9 @@ struct Shared {
     /// What's on screen now, to skip redundant work: `None` until known, then
     /// `Some(None)` while hidden.
     shown: Mutex<Option<Option<Placement>>>,
+    /// Bumped with every decision; the main thread drops updates that aren't the latest,
+    /// since several threads can queue them out of order.
+    generation: Arc<AtomicU64>,
     on_event: Box<dyn Fn(Event) + Send + Sync>,
     quit: AtomicBool,
 }
@@ -74,6 +77,7 @@ impl Overlay {
             engine: Mutex::new(Engine::new(config)),
             foreground: Mutex::new(None),
             shown: Mutex::new(None),
+            generation: Arc::new(AtomicU64::new(0)),
             on_event: Box::new(on_event),
             quit: AtomicBool::new(false),
         });
@@ -141,17 +145,24 @@ fn poll_foreground(shared: Arc<Shared>) {
 /// main thread. Callable from any thread.
 fn refresh(shared: &Shared) {
     let next = placement(shared);
-    {
+    let generation = {
         let mut shown = shared.shown.lock().unwrap();
         let placement = next.as_ref().map(|(p, _)| p.clone());
         if shown.as_ref() == Some(&placement) {
             return;
         }
         *shown = Some(placement);
-    }
-    on_main(move || match next {
-        None => window::hide(),
-        Some((p, image)) => window::show(&image, &frame(&p, &image)),
+        shared.generation.fetch_add(1, Ordering::SeqCst) + 1
+    };
+    let latest = shared.generation.clone();
+    on_main(move || {
+        if latest.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        match next {
+            None => window::hide(),
+            Some((p, image)) => window::show(&image, &frame(&p, &image)),
+        }
     });
 }
 
