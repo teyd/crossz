@@ -199,7 +199,7 @@ mod tests {
     }
 
     fn stretched() -> Scale {
-        Resolution::custom(1280, 960).scale(2560, 1440, false)
+        Resolution::custom(1280, 960).scale(2560, 1440)
     }
 
     /// Asserts every pixel: `color` inside one of `spans` (center-relative), clear elsewhere.

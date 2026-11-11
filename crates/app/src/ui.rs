@@ -208,7 +208,7 @@ impl SettingsView {
         let crosshair = store.crosshair().clone();
         let (width, height) = store.screen;
         let listed = store.selected_game.is_some();
-        let scale = game.resolution.scale(width, height, game.black_bars);
+        let scale = game.resolution.scale(width, height);
         let (image, zoom) = self.image("preview".into(), &crosshair, scale, PREVIEW, window, cx);
         let game_name = if listed {
             game.display_name().to_owned()
@@ -217,8 +217,7 @@ impl SettingsView {
         };
         let how = match game.resolution {
             Resolution::Native => "at native resolution".to_owned(),
-            r if game.black_bars => format!("at {r} with black bars"),
-            r => format!("at {r}, stretched"),
+            r => format!("stretched like {r}"),
         };
         let theme = cx.theme();
 
@@ -372,7 +371,67 @@ fn games_page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -> 
         Some(_) => game.display_name().to_owned(),
         None => "Other programs".to_owned(),
     };
-    let native = game.resolution == Resolution::Native;
+    let custom = !COMMON.contains(&game.resolution);
+    let mut items = vec![
+        SettingItem::new(
+            "Crosshair",
+            SettingField::render(|_, _, cx| crosshair_picker(cx)),
+        ),
+        SettingItem::new(
+            "Stretch like",
+            SettingField::dropdown(
+                resolution_options(),
+                |cx| resolution_key(Store::get(cx).game().resolution).into(),
+                |key, cx| {
+                    let resolution = match key.as_ref() {
+                        "custom" if !COMMON.contains(&Store::get(cx).game().resolution) => return,
+                        "custom" => Resolution::custom(1600, 1200),
+                        key => key.parse().unwrap_or_default(),
+                    };
+                    Store::edit_game(cx, |g| g.resolution = resolution);
+                },
+            ),
+        )
+        .description(
+            "Draws the crosshair the way it looks at this resolution, stretched to your screen. Your game can run at any resolution.",
+        ),
+    ];
+    if custom {
+        items.push(game_number(
+            "Width",
+            (320.0, 7680.0, 1.0),
+            |g| custom_size(g).0 as f32,
+            |g, v| {
+                let (_, h) = custom_size(g);
+                g.resolution = Resolution::custom((v as u32).max(1), h);
+            },
+        ));
+        items.push(game_number(
+            "Height",
+            (240.0, 4320.0, 1.0),
+            |g| custom_size(g).1 as f32,
+            |g, v| {
+                let (w, _) = custom_size(g);
+                g.resolution = Resolution::custom(w, (v as u32).max(1));
+            },
+        ));
+    }
+    items.push(game_number(
+        "Offset X",
+        (-50.0, 50.0, 1.0),
+        |g| g.offset[0] as f32,
+        |g, v| {
+            g.offset[0] = v as i32;
+        },
+    ));
+    items.push(game_number(
+        "Offset Y",
+        (-50.0, 50.0, 1.0),
+        |g| g.offset[1] as f32,
+        |g, v| {
+            g.offset[1] = v as i32;
+        },
+    ));
     let editor = SettingGroup::new()
         .title(title.clone())
         .description(
@@ -382,75 +441,7 @@ fn games_page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -> 
                 "Applies while this game is in the foreground."
             },
         )
-        .items([
-            SettingItem::new(
-                "Crosshair",
-                SettingField::render(|_, _, cx| crosshair_picker(cx)),
-            ),
-            SettingItem::new(
-                "Game resolution",
-                SettingField::dropdown(
-                    resolution_options(),
-                    |cx| resolution_key(Store::get(cx).game().resolution).into(),
-                    |key, cx| {
-                        let resolution = match key.as_ref() {
-                            "custom" => match Store::get(cx).game().resolution {
-                                Resolution::Native => Resolution::custom(1280, 960),
-                                r => r,
-                            },
-                            key => key.parse().unwrap_or_default(),
-                        };
-                        Store::edit_game(cx, |g| g.resolution = resolution);
-                    },
-                ),
-            )
-            .description("The resolution you set in the game's video settings."),
-            game_number(
-                "Width",
-                (320.0, 7680.0, 1.0),
-                |g| custom_size(g).0 as f32,
-                |g, v| {
-                    let (_, h) = custom_size(g);
-                    g.resolution = Resolution::custom((v as u32).max(1), h);
-                },
-            )
-            .disabled(native),
-            game_number(
-                "Height",
-                (240.0, 4320.0, 1.0),
-                |g| custom_size(g).1 as f32,
-                |g, v| {
-                    let (w, _) = custom_size(g);
-                    g.resolution = Resolution::custom(w, (v as u32).max(1));
-                },
-            )
-            .disabled(native),
-            SettingItem::new(
-                "Black bars",
-                SettingField::switch(
-                    |cx| Store::get(cx).game().black_bars,
-                    |on, cx| Store::edit_game(cx, |g| g.black_bars = on),
-                ),
-            )
-            .description("Off when the game stretches to fill the screen, which is most common.")
-            .disabled(native),
-            game_number(
-                "Offset X",
-                (-50.0, 50.0, 1.0),
-                |g| g.offset[0] as f32,
-                |g, v| {
-                    g.offset[0] = v as i32;
-                },
-            ),
-            game_number(
-                "Offset Y",
-                (-50.0, 50.0, 1.0),
-                |g| g.offset[1] as f32,
-                |g, v| {
-                    g.offset[1] = v as i32;
-                },
-            ),
-        ]);
+        .items(items);
 
     let bindings: Vec<SettingItem> = (game.bindings.iter().enumerate())
         .map(|(i, binding)| {
@@ -1351,7 +1342,7 @@ fn options<K: Into<SharedString>, L: Into<SharedString>>(
 
 fn resolution_options() -> Vec<(SharedString, SharedString)> {
     let label = |r: Resolution| match r {
-        Resolution::Native => "Native (same as the screen)".to_owned(),
+        Resolution::Native => "Native (no stretch)".to_owned(),
         Resolution::Custom { width, height } => {
             let aspect = match (width * 3 == height * 4, width * 4 == height * 5) {
                 (true, _) => " (4:3)",
