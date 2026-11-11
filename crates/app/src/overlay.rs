@@ -1,5 +1,6 @@
-//! Bridges the UI to Windows: the overlay, running programs, icons and autostart. On
-//! other platforms these do nothing, which keeps the settings UI runnable for development.
+//! Bridges the UI to the platform: the overlay, running programs, icons and autostart.
+//! Windows and macOS crates share one API; elsewhere these do nothing, which keeps the
+//! settings UI runnable.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,13 +26,17 @@ pub fn icon(path: &str, cx: &mut App) -> Option<Arc<RenderImage>> {
         .clone()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod imp {
     use std::sync::Arc;
 
     use crossz_core::Config;
-    use crossz_overlay_win::{Command, Event, Overlay};
+    #[cfg(target_os = "macos")]
+    use crossz_overlay_mac as platform;
+    #[cfg(windows)]
+    use crossz_overlay_win as platform;
     use gpui_kit::{App, Global, RenderImage};
+    use platform::{Command, Event, Overlay};
 
     use super::RunningProgram;
     use crate::Message;
@@ -41,9 +46,14 @@ mod imp {
 
     impl Global for Handle {}
 
+    /// On macOS this must run on the main thread, which it does inside the app's run loop.
     pub fn start(config: Config, messages: async_channel::Sender<Message>, cx: &mut App) {
-        let overlay = Overlay::spawn(config, move |Event::EnabledChanged(on)| {
-            let _ = messages.send_blocking(Message::Enabled(on));
+        let overlay = Overlay::spawn(config, move |event| {
+            let message = match event {
+                Event::EnabledChanged(on) => Message::Enabled(on),
+                Event::InputUnavailable => Message::InputUnavailable,
+            };
+            let _ = messages.send_blocking(message);
         });
         match overlay {
             Ok(overlay) => cx.set_global(Handle(overlay)),
@@ -68,7 +78,7 @@ mod imp {
     }
 
     pub fn running_programs() -> Vec<RunningProgram> {
-        crossz_overlay_win::running_programs()
+        platform::running_programs()
             .into_iter()
             .map(|p| RunningProgram {
                 exe: p.exe,
@@ -79,23 +89,23 @@ mod imp {
     }
 
     pub fn load_icon(path: &str) -> Option<Arc<RenderImage>> {
-        let icon = crossz_overlay_win::icon(path)?;
+        let icon = platform::icon(path)?;
         crate::preview::icon(icon.width, icon.height, icon.bgra)
     }
 
-    /// Development builds never register themselves to start with Windows.
+    /// Development builds never register themselves to start at login.
     pub fn sync_autostart(cx: &mut App) {
         if cfg!(debug_assertions) {
             return;
         }
         let enabled = Store::get(cx).config.general.start_with_windows;
-        if let Err(e) = crossz_overlay_win::autostart::set(enabled, "--autostart") {
-            Store::report(cx, format!("couldn't change starting with Windows: {e}"));
+        if let Err(e) = platform::autostart::set(enabled, "--autostart") {
+            Store::report(cx, format!("couldn't change starting at login: {e}"));
         }
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use std::sync::Arc;
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/overlay-win", "crates/app"]
+members = ["crates/core", "crates/overlay-win", "crates/overlay-mac", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ rust-version = "1.90"
 [workspace.dependencies]
 crossz-core = { path = "crates/core" }
 crossz-overlay-win = { path = "crates/overlay-win" }
+crossz-overlay-mac = { path = "crates/overlay-mac" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tiny-skia = { version = "0.12", default-features = false, features = ["std"] }

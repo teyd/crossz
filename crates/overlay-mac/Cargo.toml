@@ -1,0 +1,24 @@
+[package]
+name = "crossz-overlay-mac"
+description = "macOS click-through overlay, foreground tracking and global input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crossz-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
+libc = "0.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSBitmapImageRep", "NSColor", "NSGraphics", "NSImage", "NSImageRep", "NSPanel", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "objc2-quartz-core"] }
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSDictionary", "NSGeometry", "NSString", "NSURL", "NSValue"] }
+objc2-quartz-core = { version = "0.3", features = ["CALayer", "objc2-core-foundation"] }
+
+[lints]
+workspace = true
