@@ -224,7 +224,7 @@ impl Runner {
         let rect = foreground::target_rect(self.foreground, target);
         let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
         let game = shown.game;
-        let scale = (game.resolution).scale(width as u32, height as u32, game.black_bars);
+        let scale = game.resolution.scale(width as u32, height as u32);
         let [dx, dy] = game.offset;
 
         let stale = (self.rendered.as_ref())

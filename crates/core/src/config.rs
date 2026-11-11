@@ -80,11 +80,10 @@ pub struct Game {
     /// Name of a custom or built-in crosshair.
     #[serde(default = "default_crosshair")]
     pub crosshair: String,
+    /// Makes the crosshair look like it would at this resolution, stretched over the
+    /// screen. The game's real resolution doesn't matter.
     #[serde(default)]
     pub resolution: Resolution,
-    /// Whether the game shows black bars instead of stretching to fill the screen.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub black_bars: bool,
     /// Screen-pixel nudge from the center, `[x, y]`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub offset: [i32; 2],
@@ -101,7 +100,6 @@ impl Game {
             enabled: true,
             crosshair: default_crosshair(),
             resolution: Resolution::Native,
-            black_bars: false,
             offset: [0, 0],
             bindings: Vec::new(),
         }
@@ -134,10 +132,6 @@ fn enabled() -> bool {
 
 fn is_true(b: &bool) -> bool {
     *b
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
 }
 
 fn is_zero(o: &[i32; 2]) -> bool {
@@ -337,7 +331,6 @@ mod tests {
             exe = "RustClient.exe"
             crosshair = "mine"
             resolution = "1280x960"
-            black_bars = true
 
             [[game.binding]]
             trigger = "Mouse2"

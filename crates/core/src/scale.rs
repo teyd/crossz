@@ -3,7 +3,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-/// The resolution a game renders at, written `native` or like `1280x960` in config.
+/// The resolution a crosshair is drawn for, written `native` or like `1280x960` in
+/// config. A lower one is stretched over the screen, like a stretched game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum Resolution {
@@ -40,21 +41,18 @@ impl Resolution {
         Resolution::Custom { width, height }
     }
 
-    /// How much one game pixel grows on a `screen_w`×`screen_h` screen. A lower
-    /// resolution stretched over the screen scales each axis on its own, so a 4:3
-    /// crosshair on 16:9 gets wider; with black bars both axes follow the height.
-    pub fn scale(self, screen_w: u32, screen_h: u32, black_bars: bool) -> Scale {
+    /// How much one crosshair pixel grows when this resolution is stretched over a
+    /// `screen_w`×`screen_h` screen. Each axis scales on its own, so a 4:3 crosshair
+    /// on a 16:9 screen gets wider, exactly like a stretched game.
+    pub fn scale(self, screen_w: u32, screen_h: u32) -> Scale {
         let Resolution::Custom { width, height } = self else {
             return Scale::ONE;
         };
-        let ratio = |screen: u32, game: u32| screen as f32 / game.max(1) as f32;
-        let y = ratio(screen_h, height);
-        let x = if black_bars {
-            y
-        } else {
-            ratio(screen_w, width)
-        };
-        Scale { x, y }
+        let ratio = |screen: u32, virt: u32| screen as f32 / virt.max(1) as f32;
+        Scale {
+            x: ratio(screen_w, width),
+            y: ratio(screen_h, height),
+        }
     }
 }
 
@@ -158,24 +156,18 @@ mod tests {
     #[test]
     fn stretched_1280x960_on_1440p() {
         let r = Resolution::custom(1280, 960);
-        assert_eq!(r.scale(2560, 1440, false), Scale { x: 2.0, y: 1.5 });
-    }
-
-    #[test]
-    fn black_bars_use_height() {
-        let r = Resolution::custom(1280, 960);
-        assert_eq!(r.scale(2560, 1440, true), Scale { x: 1.5, y: 1.5 });
+        assert_eq!(r.scale(2560, 1440), Scale { x: 2.0, y: 1.5 });
     }
 
     #[test]
     fn same_aspect_is_uniform() {
         let r = Resolution::custom(1280, 720);
-        assert_eq!(r.scale(2560, 1440, false), Scale { x: 2.0, y: 2.0 });
+        assert_eq!(r.scale(2560, 1440), Scale { x: 2.0, y: 2.0 });
     }
 
     #[test]
     fn native_ignores_screen() {
-        assert_eq!(Resolution::Native.scale(2560, 1440, false), Scale::ONE);
+        assert_eq!(Resolution::Native.scale(2560, 1440), Scale::ONE);
     }
 
     #[test]
