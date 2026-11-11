@@ -97,6 +97,7 @@ pub struct SettingsView {
     color: Entity<ColorPickerState>,
     outline_color: Entity<ColorPickerState>,
     new_game: Entity<InputState>,
+    import_code: Entity<InputState>,
     capture_focus: FocusHandle,
     recording: Option<Recording>,
     images: HashMap<String, CachedImage>,
@@ -108,6 +109,8 @@ impl SettingsView {
         let color = cx.new(|cx| ColorPickerState::new(window, cx));
         let outline_color = cx.new(|cx| ColorPickerState::new(window, cx));
         let new_game = cx.new(|cx| InputState::new(window, cx).placeholder("game.exe"));
+        let import_code =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Paste a Valorant crosshair code"));
         let subscriptions = vec![
             cx.subscribe(&color, |_, _, event: &ColorPickerEvent, cx| {
                 if let ColorPickerEvent::Change(Some(hsla)) = event {
@@ -128,6 +131,7 @@ impl SettingsView {
             color,
             outline_color,
             new_game,
+            import_code,
             capture_focus: cx.focus_handle(),
             recording: None,
             images: HashMap::new(),
@@ -866,9 +870,11 @@ fn crosshairs_page(view: &mut SettingsView, window: &mut Window, cx: &mut App) -
         .title("Built-in")
         .description("Always available. Customize one to change it.")
         .item(SettingItem::render(move |_, _, cx| gallery(&builtin, cx)));
+    let import_code = view.import_code.clone();
     let custom_group = SettingGroup::new()
         .title("Custom")
         .item(SettingItem::render(move |_, _, cx| {
+            let code_input = import_code.clone();
             v_flex()
                 .w_full()
                 .gap_3()
@@ -883,6 +889,25 @@ fn crosshairs_page(view: &mut SettingsView, window: &mut Window, cx: &mut App) -
                                 copy_crosshair(cx, Crosshair::blank("New crosshair"))
                             }),
                     ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().flex_1().child(Input::new(&import_code).small()))
+                        .child(
+                            Button::new("crosshair-import")
+                                .small()
+                                .outline()
+                                .label("Import")
+                                .on_click(move |_, window, cx| {
+                                    let code = code_input.read(cx).value().to_string();
+                                    if import_valorant(&code, cx) {
+                                        code_input.update(cx, |state, cx| {
+                                            state.set_value("", window, cx)
+                                        });
+                                    }
+                                }),
+                        ),
                 )
         }));
 
@@ -975,6 +1000,22 @@ fn gallery(tiles: &[(String, Arc<RenderImage>, bool)], cx: &App) -> AnyElement {
                 .on_click(move |_, _, cx| Store::select_crosshair(cx, pick.clone()))
         }))
         .into_any_element()
+}
+
+/// Adds a crosshair from a Valorant code; false (with the reason shown) if it isn't one.
+fn import_valorant(code: &str, cx: &mut App) -> bool {
+    let name = store::unique_name(&Store::get(cx).config, "Imported");
+    match crossz_core::valorant::parse(code, &name) {
+        Ok(crosshair) => {
+            Store::edit(cx, |c| c.crosshairs.push(crosshair));
+            Store::select_crosshair(cx, name);
+            true
+        }
+        Err(e) => {
+            Store::report(cx, format!("Couldn't import that code: {e}"));
+            false
+        }
+    }
 }
 
 fn copy_crosshair(cx: &mut App, mut crosshair: Crosshair) {
@@ -1074,6 +1115,41 @@ fn crosshair_editor(view: &SettingsView) -> Vec<SettingItem> {
                 |on, cx| Store::edit_crosshair(cx, |c| arms_mut(c).t_style = on),
             ),
         ),
+        number(
+            "Line opacity %",
+            (0.0, 100.0, 5.0),
+            |c| arms_of(c).opacity * 100.0,
+            |c, v| arms_mut(c).opacity = v / 100.0,
+        ),
+        toggle(
+            "Outer lines",
+            |c| c.outer.is_some(),
+            |c, on| c.outer = on.then_some(OUTER_DEFAULT),
+        ),
+        number(
+            "Outer length",
+            (0.0, 100.0, 1.0),
+            |c| outer_of(c).length,
+            |c, v| outer_mut(c).length = v,
+        ),
+        number(
+            "Outer thickness",
+            (0.5, 20.0, 0.5),
+            |c| outer_of(c).thickness,
+            |c, v| outer_mut(c).thickness = v,
+        ),
+        number(
+            "Outer gap",
+            (-10.0, 100.0, 1.0),
+            |c| outer_of(c).gap,
+            |c, v| outer_mut(c).gap = v,
+        ),
+        number(
+            "Outer opacity %",
+            (0.0, 100.0, 5.0),
+            |c| outer_of(c).opacity * 100.0,
+            |c, v| outer_mut(c).opacity = v / 100.0,
+        ),
         toggle(
             "Center dot",
             |c| c.dot.is_some(),
@@ -1086,6 +1162,12 @@ fn crosshair_editor(view: &SettingsView) -> Vec<SettingItem> {
             |c, v| {
                 c.dot.get_or_insert(Dot::DEFAULT).size = v;
             },
+        ),
+        number(
+            "Dot opacity %",
+            (0.0, 100.0, 5.0),
+            |c| c.dot.unwrap_or(Dot::DEFAULT).opacity * 100.0,
+            |c, v| c.dot.get_or_insert(Dot::DEFAULT).opacity = v / 100.0,
         ),
         toggle(
             "Circle",
@@ -1306,6 +1388,22 @@ fn toggle(
             move |on, cx| Store::edit_crosshair(cx, |c| set(c, on)),
         ),
     )
+}
+
+const OUTER_DEFAULT: Arms = Arms {
+    length: 2.0,
+    thickness: 2.0,
+    gap: 9.0,
+    t_style: false,
+    opacity: 1.0,
+};
+
+fn outer_of(c: &Crosshair) -> Arms {
+    c.outer.unwrap_or(OUTER_DEFAULT)
+}
+
+fn outer_mut(c: &mut Crosshair) -> &mut Arms {
+    c.outer.get_or_insert(OUTER_DEFAULT)
 }
 
 fn arms_of(c: &Crosshair) -> Arms {
