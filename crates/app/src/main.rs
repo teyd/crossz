@@ -76,7 +76,10 @@ impl Update {
 }
 
 struct Args {
+    /// `--hidden`: start in the tray, e.g. after an update installed in the background.
     hidden: bool,
+    /// `--autostart`: launched at login, where `start_minimized` applies.
+    autostart: bool,
     #[cfg_attr(not(windows), allow(dead_code))]
     after_update: Option<u32>,
 }
@@ -87,7 +90,8 @@ fn args() -> Args {
         .and_then(|i| args.get(i + 1))
         .and_then(|pid| pid.parse().ok());
     Args {
-        hidden: args.iter().any(|a| a == "--hidden" || a == "--autostart"),
+        hidden: args.iter().any(|a| a == "--hidden"),
+        autostart: args.iter().any(|a| a == "--autostart"),
         after_update,
     }
 }
@@ -137,7 +141,10 @@ fn main() {
         Ok((config, created)) => (config, created, None),
         Err(e) => (Config::default(), false, Some(e.to_string())),
     };
-    let show_window = first_run || !(args.hidden || config.general.start_minimized);
+    // Starting crossz by hand always shows settings; only a login launch honours
+    // `start_minimized`. A first run or an unreadable config shows them regardless.
+    let minimized = args.hidden || (args.autostart && config.general.start_minimized);
+    let show_window = first_run || load_error.is_some() || !minimized;
     watch::spawn(path.clone(), messages.clone());
     #[cfg(windows)]
     {

@@ -1270,7 +1270,7 @@ fn general_page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -
                 |on, cx| Store::edit(cx, |c| c.general.start_minimized = on),
             ),
         )
-        .description("Opens to the tray. Click the tray icon for settings."),
+        .description("When starting at login, open to the tray instead of this window."),
     ]);
 
     let updates = SettingGroup::new().title("Updates").items([
