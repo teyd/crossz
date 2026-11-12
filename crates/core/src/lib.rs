@@ -6,15 +6,16 @@ pub mod config;
 pub mod engine;
 pub mod input;
 pub mod model;
+pub mod pixels;
 pub mod presets;
 pub mod raster;
 pub mod scale;
-pub mod valorant;
 
 pub use color::Color;
 pub use config::{Action, Binding, Config, Game, General, Show};
 pub use engine::{Engine, Shown, Target};
 pub use input::{Chord, Key, Mods};
-pub use model::{Arms, Circle, Crosshair, Dot, Outline};
+pub use model::{Arms, Circle, Crosshair, Dot, Outline, Shape};
+pub use pixels::Pixels;
 pub use raster::{Image, render};
 pub use scale::{Resolution, Scale, Snap};

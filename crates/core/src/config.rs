@@ -11,7 +11,8 @@ use crate::{Chord, Crosshair, Resolution, presets};
 pub struct Config {
     #[serde(default)]
     pub general: General,
-    /// Used in every program that isn't a listed game, when `general.show` allows it.
+    /// Used outside listed games: every other program with `ExceptListed`, every
+    /// program with `Everywhere`.
     #[serde(default = "Game::other_programs")]
     pub other_programs: Game,
     #[serde(default, rename = "game", skip_serializing_if = "Vec::is_empty")]
@@ -57,7 +58,7 @@ pub enum Show {
     InGames,
     /// Everywhere except while a listed game is in the foreground.
     ExceptListed,
-    /// Everywhere; listed games get their own settings.
+    /// Everywhere, with `other_programs`' settings; the games list isn't used.
     Everywhere,
 }
 
@@ -342,8 +343,11 @@ mod tests {
 
             [[crosshair]]
             name = "mine"
-            color = "#ff00ff"
-            dot = { size = 2 }
+            zoom = 1.5
+
+            [crosshair.pixels]
+            palette = ["#ff00ff"]
+            rows = [".0.", "000", ".0."]
             "##,
         )
         .unwrap();
@@ -352,7 +356,9 @@ mod tests {
         assert!(rust.enabled);
         assert_eq!(rust.resolution, Resolution::custom(1280, 960));
         assert_eq!(rust.bindings[1].action, Action::SetCrosshair("Plus".into()));
-        assert_eq!(config.crosshair("mine").unwrap().opacity, 1.0);
+        let mine = config.crosshair("mine").unwrap();
+        assert_eq!((mine.opacity, mine.zoom), (1.0, 1.5));
+        assert_eq!(mine.pixels.as_ref().unwrap().width(), 3);
         assert_eq!(config.crosshair("Dot").unwrap().name, "Dot");
     }
 
@@ -364,7 +370,7 @@ mod tests {
 
     #[test]
     fn rejects_custom_crosshair_named_like_a_preset() {
-        let err = parse("[[crosshair]]\nname = \"Dot\"\ncolor = \"#ffffff\"").unwrap_err();
+        let err = parse("[[crosshair]]\nname = \"Dot\"").unwrap_err();
         assert!(err.to_string().contains("built-in"), "{err}");
     }
 

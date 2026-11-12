@@ -148,15 +148,16 @@ impl Engine {
     }
 
     /// The listed game in the foreground, or other programs, if the crosshair applies there.
+    /// Games only matter while showing in games or excluding them.
     fn matched(&self) -> Option<(&Game, Target)> {
         let config = &self.config;
         let game = (self.foreground.as_deref())
             .and_then(|exe| config.games.iter().find(|g| g.matches(exe)));
         let other = (&config.other_programs, Target::Monitor);
         match (config.general.show, game) {
-            (Show::InGames | Show::Everywhere, Some(game)) => Some((game, Target::Window)),
+            (Show::InGames, Some(game)) => Some((game, Target::Window)),
             (Show::InGames, None) | (Show::ExceptListed, Some(_)) => None,
-            (Show::ExceptListed | Show::Everywhere, None) => Some(other),
+            (Show::ExceptListed, None) | (Show::Everywhere, _) => Some(other),
         }
     }
 }
@@ -186,7 +187,7 @@ mod tests {
         c.general.show = show;
         c.games = games;
         c.other_programs.crosshair = "Plus".into();
-        c.crosshairs = vec![Crosshair::blank("mine")];
+        c.crosshairs = vec![Crosshair::pixels("mine", crate::Pixels::new(1, 1))];
         c.validate().unwrap();
         c
     }
@@ -231,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn everywhere_uses_each_games_crosshair() {
+    fn everywhere_ignores_the_games_list() {
         let mut e = Engine::new(config(
             Show::Everywhere,
             vec![game("cs2.exe", "mine", vec![])],
@@ -239,7 +240,8 @@ mod tests {
         e.set_foreground(Some("notepad.exe"));
         assert_eq!(shown(&e), Some("Plus"));
         e.set_foreground(Some("cs2.exe"));
-        assert_eq!(shown(&e), Some("mine"));
+        assert_eq!(shown(&e), Some("Plus"));
+        assert_eq!(e.shown().unwrap().target, Target::Monitor);
     }
 
     #[test]
@@ -335,17 +337,17 @@ mod tests {
             "Dot",
             vec![bind("F6", Action::SetCrosshair("mine".into()))],
         );
-        let mut e = Engine::new(config(Show::Everywhere, vec![g.clone()]));
+        let mut e = Engine::new(config(Show::InGames, vec![g.clone()]));
         e.set_foreground(Some("a.exe"));
         press(&mut e, "F6");
         assert_eq!(shown(&e), Some("mine"));
         e.set_foreground(Some("notepad.exe"));
-        assert_eq!(shown(&e), Some("Plus"));
-        e.set_config(config(Show::Everywhere, vec![g.clone()]));
+        assert_eq!(shown(&e), None);
+        e.set_config(config(Show::InGames, vec![g.clone()]));
         e.set_foreground(Some("a.exe"));
         assert_eq!(shown(&e), Some("mine"));
 
-        let mut without_mine = config(Show::Everywhere, vec![]);
+        let mut without_mine = config(Show::InGames, vec![]);
         without_mine.crosshairs.clear();
         without_mine.games = vec![game("a.exe", "Dot", vec![])];
         e.set_config(without_mine);

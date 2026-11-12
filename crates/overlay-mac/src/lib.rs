@@ -20,6 +20,13 @@ use objc2::MainThreadMarker;
 
 pub use programs::{Icon, Program, icon, running_programs};
 
+/// The main display's resolution in physical pixels.
+pub fn main_display_size() -> (u32, u32) {
+    let display = screen::display_at(None);
+    let pixels = |points: f64| (points * display.scale).round() as u32;
+    (pixels(display.bounds.width), pixels(display.bounds.height))
+}
+
 pub enum Command {
     SetConfig(Box<Config>),
     SetEnabled(bool),

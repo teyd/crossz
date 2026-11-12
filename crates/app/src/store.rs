@@ -14,7 +14,7 @@ pub struct Store {
     pub selected_game: Option<usize>,
     /// Crosshair shown in the preview and the crosshair editor.
     pub selected_crosshair: String,
-    /// Screen size the preview pretends to be.
+    /// The main display's resolution, which the preview draws for.
     pub screen: (u32, u32),
     /// Binds can't work until the user allows input access (macOS Input Monitoring).
     pub input_unavailable: bool,
@@ -31,7 +31,7 @@ impl Store {
             error: None,
             selected_game,
             selected_crosshair: String::new(),
-            screen: (2560, 1440),
+            screen: crate::overlay::main_display_size(),
             input_unavailable: false,
         };
         store.selected_crosshair = store.game().crosshair.clone();
@@ -55,6 +55,17 @@ impl Store {
 
     pub fn crosshair_is_custom(&self) -> bool {
         (self.config.crosshairs.iter()).any(|c| c.name == self.selected_crosshair)
+    }
+
+    /// Where crossz shows a crosshair while this game is in front, as a short label.
+    pub fn game_label(&self) -> String {
+        match self.selected_game {
+            Some(_) => self.game().display_name().to_owned(),
+            None if self.config.general.show == crossz_core::Show::Everywhere => {
+                "all programs".to_owned()
+            }
+            None => "other programs".to_owned(),
+        }
     }
 
     pub fn select_game(cx: &mut App, game: Option<usize>) {
@@ -188,7 +199,8 @@ mod tests {
 
     fn config() -> Config {
         let mut c = Config::default();
-        c.crosshairs.push(Crosshair::blank("mine"));
+        c.crosshairs
+            .push(Crosshair::pixels("mine", crossz_core::Pixels::new(3, 3)));
         c.games[0].crosshair = "mine".into();
         c.other_programs.bindings.push(Binding {
             trigger: "F6".parse().unwrap(),
