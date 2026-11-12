@@ -206,7 +206,7 @@ fn game_row(
     })
 }
 
-/// "Plus with gap · stretched like 1280x960 · 1 bind"
+/// "Own crosshair: Dot · stretched like 1280x960 · 1 bind"
 fn summary(game: &Game) -> String {
     let stretch = match game.resolution {
         Resolution::Native => "not stretched".to_owned(),
@@ -217,7 +217,10 @@ fn summary(game: &Game) -> String {
         1 => "1 bind".to_owned(),
         n => format!("{n} binds"),
     };
-    format!("{} · {stretch} · {binds}", game.crosshair)
+    match &game.crosshair {
+        Some(own) => format!("Own crosshair: {own} · {stretch} · {binds}"),
+        None => format!("{stretch} · {binds}"),
+    }
 }
 
 fn program_icon(icon: Option<Arc<RenderImage>>, cx: &App) -> AnyElement {
@@ -393,6 +396,9 @@ fn editor(this: WeakEntity<SettingsView>, _window: &mut Window, cx: &mut App) ->
     let focus = view.capture_focus.clone();
     let game = Store::get(cx).game().clone();
     let custom = !COMMON.contains(&game.resolution);
+    // Other programs follow the selected crosshair; only listed games may pick their own.
+    let can_pick = Store::get(cx).selected_game.is_some() || game.crosshair.is_some();
+    let selected = Store::get(cx).active().name.clone();
 
     let binds = (game.bindings.iter().enumerate()).map(|(i, binding)| {
         bind_row(
@@ -411,7 +417,9 @@ fn editor(this: WeakEntity<SettingsView>, _window: &mut Window, cx: &mut App) ->
         .gap_6()
         .child(
             Form::new()
-                .child(Field::new().label("Crosshair").child(crosshair_picker(&game.crosshair)))
+                .when(can_pick, |form| {
+                    form.child(crosshair_field(game.crosshair.clone(), selected))
+                })
                 .child(
                     Field::new()
                         .label("Stretch like")
@@ -633,19 +641,40 @@ fn crosshair_items(
         .fold(menu.separator().label("Yours"), |m, n| m.item(item(n)))
 }
 
-fn crosshair_picker(current: &str) -> AnyElement {
-    let current = current.to_owned();
-    Button::new("game-crosshair")
-        .outline()
-        .label(current.clone())
-        .dropdown_caret(true)
-        .dropdown_menu(move |menu, _, cx| {
-            crosshair_items(menu, &current, cx, |name, cx| {
-                Store::edit_game(cx, |g| g.crosshair = name.clone());
-                Store::select_crosshair(cx, name);
-            })
-        })
-        .into_any_element()
+/// Off, the game uses the crosshair selected on the Crosshairs page; on, its own.
+fn crosshair_field(own: Option<String>, selected: String) -> Field {
+    let description = match &own {
+        Some(_) => "This game ignores the crosshair selected on the Crosshairs page.".to_owned(),
+        None => format!("Uses the selected crosshair, {selected}."),
+    };
+    let toggle = Switch::new("game-own-crosshair")
+        .label("Own crosshair")
+        .checked(own.is_some())
+        .on_change(move |on: &bool, _, cx| {
+            let own = on.then(|| Store::get(cx).active().name.clone());
+            Store::edit_game(cx, |g| g.crosshair = own);
+        });
+    Field::new()
+        .label("Crosshair")
+        .description(description)
+        .child(
+            h_flex()
+                .gap_3()
+                .child(toggle)
+                .when_some(own, |row, current| {
+                    row.child(
+                        Button::new("game-crosshair")
+                            .outline()
+                            .label(current.clone())
+                            .dropdown_caret(true)
+                            .dropdown_menu(move |menu, _, cx| {
+                                crosshair_items(menu, &current, cx, |name, cx| {
+                                    Store::edit_game(cx, |g| g.crosshair = Some(name.clone()));
+                                })
+                            }),
+                    )
+                }),
+        )
 }
 
 fn stretch_picker(current: Resolution, this: WeakEntity<SettingsView>) -> AnyElement {

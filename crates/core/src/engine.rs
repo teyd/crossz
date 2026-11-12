@@ -139,7 +139,7 @@ impl Engine {
         }
         let crosshair = (self.switched.get(&state_key))
             .and_then(|name| self.config.crosshair(name))
-            .or_else(|| self.config.crosshair(&game.crosshair))?;
+            .or_else(|| self.config.crosshair_for(game))?;
         Some(Shown {
             crosshair,
             game,
@@ -176,7 +176,7 @@ mod tests {
 
     fn game(exe: &str, crosshair: &str, bindings: Vec<Binding>) -> Game {
         Game {
-            crosshair: crosshair.into(),
+            crosshair: Some(crosshair.into()),
             bindings,
             ..Game::new(exe)
         }
@@ -186,7 +186,7 @@ mod tests {
         let mut c = Config::default();
         c.general.show = show;
         c.games = games;
-        c.other_programs.crosshair = "Plus".into();
+        c.general.crosshair = "Plus".into();
         c.crosshairs = vec![Crosshair::pixels("mine", crate::Pixels::new(1, 1))];
         c.validate().unwrap();
         c
@@ -242,6 +242,19 @@ mod tests {
         e.set_foreground(Some("cs2.exe"));
         assert_eq!(shown(&e), Some("Plus"));
         assert_eq!(e.shown().unwrap().target, Target::Monitor);
+    }
+
+    #[test]
+    fn games_without_their_own_crosshair_follow_the_active_one() {
+        let mut g = game("cs2.exe", "Dot", vec![]);
+        g.crosshair = None;
+        let mut c = config(Show::InGames, vec![g]);
+        let mut e = Engine::new(c.clone());
+        e.set_foreground(Some("cs2.exe"));
+        assert_eq!(shown(&e), Some("Plus"));
+        c.general.crosshair = "mine".into();
+        e.set_config(c);
+        assert_eq!(shown(&e), Some("mine"));
     }
 
     #[test]

@@ -10,10 +10,9 @@ pub struct Store {
     pub path: PathBuf,
     /// Why the last edit or file change wasn't applied.
     pub error: Option<String>,
-    /// Game being edited: an index into `config.games`, or `None` for other programs.
+    /// The game the preview shows: an index into `config.games`, or `None` for the
+    /// setup outside listed games. Only listed games when showing in games.
     pub selected_game: Option<usize>,
-    /// Crosshair shown in the preview and the crosshair editor.
-    pub selected_crosshair: String,
     /// The main display's resolution, which the preview draws for.
     pub screen: (u32, u32),
     /// Binds can't work until the user allows input access (macOS Input Monitoring).
@@ -24,17 +23,15 @@ impl Global for Store {}
 
 impl Store {
     pub fn new(config: Config, path: PathBuf) -> Store {
-        let selected_game = (!config.games.is_empty()).then_some(0);
         let mut store = Store {
             config,
             path,
             error: None,
-            selected_game,
-            selected_crosshair: String::new(),
+            selected_game: None,
             screen: crate::overlay::main_display_size(),
             input_unavailable: false,
         };
-        store.selected_crosshair = store.game().crosshair.clone();
+        store.clamp_selection();
         store
     }
 
@@ -48,13 +45,25 @@ impl Store {
             .unwrap_or(&self.config.other_programs)
     }
 
-    /// The selected crosshair, falling back to the first built-in one.
+    /// The crosshair the previewed game uses, falling back to the first built-in one.
     pub fn crosshair(&self) -> &Crosshair {
-        (self.config.crosshair(&self.selected_crosshair)).unwrap_or(&presets::all()[0])
+        (self.config.crosshair_for(self.game())).unwrap_or(&presets::all()[0])
     }
 
-    pub fn crosshair_is_custom(&self) -> bool {
-        (self.config.crosshairs.iter()).any(|c| c.name == self.selected_crosshair)
+    /// The crosshair in use, unless a game picks its own.
+    pub fn active(&self) -> &Crosshair {
+        (self.config.crosshair(&self.config.general.crosshair)).unwrap_or(&presets::all()[0])
+    }
+
+    pub fn active_is_custom(&self) -> bool {
+        (self.config.crosshairs.iter()).any(|c| c.name == self.config.general.crosshair)
+    }
+
+    /// Listed games that use their own crosshair instead of the selected one.
+    pub fn games_with_own_crosshair(&self) -> Vec<&Game> {
+        (self.config.games.iter())
+            .filter(|g| g.enabled && g.crosshair.is_some())
+            .collect()
     }
 
     /// Where crossz shows a crosshair while this game is in front, as a short label.
@@ -71,12 +80,21 @@ impl Store {
     pub fn select_game(cx: &mut App, game: Option<usize>) {
         let store = cx.global_mut::<Store>();
         store.selected_game = game;
-        store.selected_crosshair = store.game().crosshair.clone();
+        store.clamp_selection();
         cx.refresh_windows();
     }
 
-    pub fn select_crosshair(cx: &mut App, name: String) {
-        cx.global_mut::<Store>().selected_crosshair = name;
+    /// Makes `name` the crosshair in use. If the previewed game has its own crosshair,
+    /// previews one that follows the selection instead, so the change is visible.
+    pub fn use_crosshair(cx: &mut App, name: String) {
+        Store::edit(cx, |c| c.general.crosshair = name);
+        let store = cx.global_mut::<Store>();
+        if store.game().crosshair.is_some()
+            && let Some(i) = (store.config.games.iter()).position(|g| g.crosshair.is_none())
+        {
+            store.selected_game = Some(i);
+            store.clamp_selection();
+        }
         cx.refresh_windows();
     }
 
@@ -109,9 +127,9 @@ impl Store {
         });
     }
 
-    /// Edits the selected crosshair if it's a custom one; built-in ones can't change.
+    /// Edits the crosshair in use if it's a custom one; built-in ones can't change.
     pub fn edit_crosshair(cx: &mut App, change: impl FnOnce(&mut Crosshair)) {
-        let name = Store::get(cx).selected_crosshair.clone();
+        let name = Store::get(cx).config.general.crosshair.clone();
         Store::edit(cx, |config| {
             if let Some(c) = config.crosshairs.iter_mut().find(|c| c.name == name) {
                 change(c);
@@ -136,16 +154,19 @@ impl Store {
         cx.refresh_windows();
     }
 
+    /// Keeps the previewed game meaningful for the current mode: a listed game when
+    /// showing in games, otherwise the setup outside them.
     fn clamp_selection(&mut self) {
-        if self
-            .selected_game
-            .is_some_and(|i| i >= self.config.games.len())
-        {
-            self.selected_game = self.config.games.len().checked_sub(1);
-        }
-        if self.config.crosshair(&self.selected_crosshair).is_none() {
-            self.selected_crosshair = self.game().crosshair.clone();
-        }
+        let in_games = self.config.general.show == crossz_core::Show::InGames;
+        let games = self.config.games.len();
+        self.selected_game = match self.selected_game {
+            _ if !in_games => None,
+            Some(i) if i < games => Some(i),
+            // Prefer a game that shows the selected crosshair.
+            _ => (self.config.games.iter())
+                .position(|g| g.crosshair.is_none())
+                .or(games.checked_sub(1).map(|_| 0)),
+        };
     }
 }
 
@@ -159,17 +180,35 @@ pub fn rename_crosshair(config: &mut Config, from: &str, to: &str) {
     replace_references(config, from, to);
 }
 
-/// Removes a custom crosshair; games using it fall back to the first built-in one.
+/// Removes a custom crosshair. Games that picked it use the one in use instead; if it
+/// was the one in use, the first built-in one takes over.
 pub fn remove_crosshair(config: &mut Config, name: &str) {
     config.crosshairs.retain(|c| c.name != name);
     let fallback = presets::all()[0].name.clone();
-    replace_references(config, name, &fallback);
+    if config.general.crosshair == name {
+        config.general.crosshair = fallback.clone();
+    }
+    for game in config.games.iter_mut().chain([&mut config.other_programs]) {
+        if game.crosshair.as_deref() == Some(name) {
+            game.crosshair = None;
+        }
+        for binding in &mut game.bindings {
+            if let Action::SetCrosshair(target) = &mut binding.action
+                && target == name
+            {
+                *target = fallback.clone();
+            }
+        }
+    }
 }
 
 fn replace_references(config: &mut Config, from: &str, to: &str) {
+    if config.general.crosshair == from {
+        config.general.crosshair = to.to_owned();
+    }
     for game in config.games.iter_mut().chain([&mut config.other_programs]) {
-        if game.crosshair == from {
-            game.crosshair = to.to_owned();
+        if game.crosshair.as_deref() == Some(from) {
+            game.crosshair = Some(to.to_owned());
         }
         for binding in &mut game.bindings {
             if let Action::SetCrosshair(name) = &mut binding.action
@@ -201,7 +240,9 @@ mod tests {
         let mut c = Config::default();
         c.crosshairs
             .push(Crosshair::pixels("mine", crossz_core::Pixels::new(3, 3)));
-        c.games[0].crosshair = "mine".into();
+        c.games[0].crosshair = Some("mine".into());
+        c.games[1].crosshair = Some("Plus".into());
+        c.general.crosshair = "mine".into();
         c.other_programs.bindings.push(Binding {
             trigger: "F6".parse().unwrap(),
             action: Action::SetCrosshair("mine".into()),
@@ -215,7 +256,8 @@ mod tests {
         let mut c = config();
         rename_crosshair(&mut c, "mine", "ours");
         c.validate().unwrap();
-        assert_eq!(c.games[0].crosshair, "ours");
+        assert_eq!(c.games[0].crosshair.as_deref(), Some("ours"));
+        assert_eq!(c.general.crosshair, "ours");
         assert_eq!(
             c.other_programs.bindings[0].action,
             Action::SetCrosshair("ours".into())
@@ -223,11 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn remove_falls_back_to_a_preset() {
+    fn remove_falls_back_to_the_active_crosshair() {
         let mut c = config();
         remove_crosshair(&mut c, "mine");
         c.validate().unwrap();
-        assert_eq!(c.games[0].crosshair, presets::all()[0].name);
+        assert_eq!(c.games[0].crosshair, None);
+        assert_eq!(c.games[1].crosshair.as_deref(), Some("Plus"));
+        assert_eq!(c.general.crosshair, presets::all()[0].name);
     }
 
     #[test]

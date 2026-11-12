@@ -26,6 +26,8 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct General {
     pub show: Show,
+    /// The crosshair in use, unless a game picks its own.
+    pub crosshair: String,
     /// Shows/hides crossz everywhere, in any program.
     pub master_toggle: Option<Chord>,
     /// Hides the overlay from screenshots, OBS and other capture.
@@ -40,6 +42,7 @@ impl Default for General {
     fn default() -> Self {
         General {
             show: Show::default(),
+            crosshair: presets::all()[0].name.clone(),
             master_toggle: "Ctrl+Alt+X".parse().ok(),
             exclude_from_capture: false,
             start_with_windows: true,
@@ -78,9 +81,9 @@ pub struct Game {
     pub path: Option<String>,
     #[serde(default = "enabled", skip_serializing_if = "is_true")]
     pub enabled: bool,
-    /// Name of a custom or built-in crosshair.
-    #[serde(default = "default_crosshair")]
-    pub crosshair: String,
+    /// A crosshair just for this game; `None` uses `general.crosshair`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crosshair: Option<String>,
     /// Makes the crosshair look like it would at this resolution, stretched over the
     /// screen. The game's real resolution doesn't matter.
     #[serde(default)]
@@ -99,7 +102,7 @@ impl Game {
             name: String::new(),
             path: None,
             enabled: true,
-            crosshair: default_crosshair(),
+            crosshair: None,
             resolution: Resolution::Native,
             offset: [0, 0],
             bindings: Vec::new(),
@@ -121,10 +124,6 @@ impl Game {
             &self.name
         }
     }
-}
-
-fn default_crosshair() -> String {
-    presets::all()[0].name.clone()
 }
 
 fn enabled() -> bool {
@@ -172,14 +171,12 @@ impl Default for Config {
     fn default() -> Self {
         let mut rust = Game::new("RustClient.exe");
         rust.name = "Rust".into();
-        rust.crosshair = "Dot".into();
         rust.bindings.push(Binding {
             trigger: Chord::key(crate::Key::MOUSE2),
             action: Action::HoldToHide,
         });
         let mut cs2 = Game::new("cs2.exe");
         cs2.name = "Counter-Strike 2".into();
-        cs2.crosshair = "Plus with gap".into();
         cs2.resolution = Resolution::custom(1280, 960);
         Config {
             general: General::default(),
@@ -255,18 +252,23 @@ impl Config {
                 return invalid(format!("{} is listed twice", game.exe));
             }
         }
+        let known = |name: &str| self.crosshair(name).is_some();
+        if !known(&self.general.crosshair) {
+            return invalid(format!(
+                "general.crosshair is the unknown crosshair {:?}",
+                self.general.crosshair
+            ));
+        }
         for game in self.games.iter().chain([&self.other_programs]) {
             let place = if game.exe.is_empty() {
                 "other_programs".to_owned()
             } else {
                 game.exe.clone()
             };
-            let known = |name: &str| self.crosshair(name).is_some();
-            if !known(&game.crosshair) {
-                return invalid(format!(
-                    "{place} uses unknown crosshair {:?}",
-                    game.crosshair
-                ));
+            if let Some(name) = &game.crosshair
+                && !known(name)
+            {
+                return invalid(format!("{place} uses unknown crosshair {name:?}"));
             }
             for b in &game.bindings {
                 if let Action::SetCrosshair(name) = &b.action
@@ -280,6 +282,13 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// The crosshair a game uses: its own, or the one in use everywhere.
+    pub fn crosshair_for(&self, game: &Game) -> Option<&Crosshair> {
+        (game.crosshair.as_deref())
+            .and_then(|name| self.crosshair(name))
+            .or_else(|| self.crosshair(&self.general.crosshair))
     }
 
     /// A custom crosshair, or a built-in one.
@@ -314,7 +323,8 @@ mod tests {
     fn empty_file_is_valid() {
         let config = parse("").unwrap();
         assert!(config.games.is_empty());
-        assert_eq!(config.other_programs.crosshair, "Plus");
+        assert_eq!(config.general.crosshair, "Plus");
+        assert_eq!(config.other_programs.crosshair, None);
     }
 
     #[test]

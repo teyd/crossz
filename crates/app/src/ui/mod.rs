@@ -318,7 +318,7 @@ impl SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = Store::get(cx).selected_crosshair.clone();
+        let selected = Store::get(cx).config.general.crosshair.clone();
         if self.paint.target != selected {
             self.paint.target = selected;
             self.paint.stroke = None;
