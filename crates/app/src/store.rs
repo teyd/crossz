@@ -314,6 +314,24 @@ mod tests {
         assert_eq!(c.games[0].crosshair, None);
         assert_eq!(c.games[1].crosshair.as_deref(), Some("Plus"));
         assert_eq!(c.general.crosshair, presets::all()[0].name);
+        assert_eq!(
+            c.other_programs.bindings[0].action,
+            Action::SetCrosshair(presets::all()[0].name.clone())
+        );
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn status_says_off_whenever_the_master_toggle_is_off() {
+        let mut store = Store::new(Config::default(), PathBuf::new());
+        store.status = Some(Status {
+            program: Some("cs2.exe".into()),
+            game: None,
+            visibility: Visibility::Hidden,
+        });
+        assert_eq!(store.status().unwrap().visibility, Visibility::Hidden);
+        store.enabled = false;
+        assert_eq!(store.status().unwrap().visibility, Visibility::Off);
     }
 
     #[test]

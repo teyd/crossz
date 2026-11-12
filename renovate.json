@@ -33,11 +33,6 @@
       "groupName": "GitHub Actions"
     },
     {
-      "description": "Pullfrog manages its own workflow file.",
-      "matchFileNames": [".github/workflows/pullfrog.yml"],
-      "enabled": false
-    },
-    {
       "description": "Tools in mise.toml and the Rust toolchain.",
       "matchManagers": ["mise", "custom.regex"],
       "groupName": "Toolchain"
