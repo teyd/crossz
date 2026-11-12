@@ -6,7 +6,7 @@ Play at native 1440p and keep the crosshair you're used to from stretched 1280×
 
 It's an external click-through window. It doesn't inject into the game or read its memory, and it doesn't work in exclusive fullscreen.
 
-Each game gets its own crosshair, resolution and binds, like hiding the crosshair while you hold Mouse2 to aim down sights in Rust. Pick a built-in crosshair or customize one.
+Pick a built-in crosshair or paint your own; it applies everywhere at once. Each game gets its own stretch and binds, like hiding the crosshair while you hold Mouse2 to aim down sights in Rust, and can keep its own crosshair.
 
 crossz runs in the tray, starts with Windows and updates itself; click the tray icon for settings. Everything is also in `%APPDATA%\crossz\config.toml`, which applies as soon as you save it.
 

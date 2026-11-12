@@ -6,7 +6,8 @@ use gpui_kit::{AssetSource, Result, SharedString};
 gpui_kit::assets::icon_assets!(
     ExtraIcons,
     [
-        Crosshair, Gamepad2, Keyboard, Trash, Pencil, X, FolderOpen, Plus, Settings
+        Crosshair, Gamepad2, Keyboard, Trash, Pencil, X, FolderOpen, Plus, Settings, Eraser, Undo2,
+        Redo2
     ]
 );
 

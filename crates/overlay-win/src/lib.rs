@@ -23,18 +23,29 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 pub use programs::{Icon, Program, icon, running_programs};
 
+/// The primary monitor's resolution in physical pixels.
+pub fn main_display_size() -> (u32, u32) {
+    let rect = foreground::target_rect(HWND::default(), crossz_core::Target::Monitor);
+    (
+        (rect.right - rect.left) as u32,
+        (rect.bottom - rect.top) as u32,
+    )
+}
+
 pub enum Command {
     SetConfig(Box<Config>),
     SetEnabled(bool),
     Quit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// The master toggle changed, from a hotkey or `Command::SetEnabled`.
     EnabledChanged(bool),
     /// Keys and buttons can't be read. Never happens on Windows; here to match macOS.
     InputUnavailable,
+    /// What the overlay is doing changed, e.g. another program came to the front.
+    Status(crossz_core::Status),
 }
 
 /// Handle to the overlay thread. Dropping it stops the overlay.

@@ -19,6 +19,28 @@ pub struct Shown<'a> {
     pub target: Target,
 }
 
+/// What the overlay is doing about the program in front, for showing to the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Status {
+    /// The program in front, as reported by the platform.
+    pub program: Option<String>,
+    /// The listed game it is, by display name.
+    pub game: Option<String>,
+    pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Visibility {
+    /// Turned off with the master toggle.
+    Off,
+    /// Showing this crosshair.
+    Shown(String),
+    /// A bind hides it right now.
+    Hidden,
+    /// Nothing is set up for this program.
+    NotHere,
+}
+
 /// Decides whether the crosshair is shown and which one, from the config, the
 /// foreground program and key/button presses. Toggles and crosshair switches are
 /// remembered per game.
@@ -62,7 +84,7 @@ impl Engine {
 
     /// `exe` is the foreground program's file name, or `None` if it couldn't be determined.
     pub fn set_foreground(&mut self, exe: Option<&str>) {
-        self.foreground = exe.map(str::to_ascii_lowercase);
+        self.foreground = exe.map(str::to_owned);
     }
 
     pub fn enabled(&self) -> bool {
@@ -139,7 +161,7 @@ impl Engine {
         }
         let crosshair = (self.switched.get(&state_key))
             .and_then(|name| self.config.crosshair(name))
-            .or_else(|| self.config.crosshair(&game.crosshair))?;
+            .or_else(|| self.config.crosshair_for(game))?;
         Some(Shown {
             crosshair,
             game,
@@ -147,16 +169,33 @@ impl Engine {
         })
     }
 
+    pub fn status(&self) -> Status {
+        let game = (self.foreground.as_deref())
+            .and_then(|exe| self.config.games.iter().find(|g| g.matches(exe)));
+        let visibility = match self.shown() {
+            _ if !self.enabled => Visibility::Off,
+            Some(shown) => Visibility::Shown(shown.crosshair.name.clone()),
+            None if self.matched().is_some() => Visibility::Hidden,
+            None => Visibility::NotHere,
+        };
+        Status {
+            program: self.foreground.clone(),
+            game: game.map(|g| g.display_name().to_owned()),
+            visibility,
+        }
+    }
+
     /// The listed game in the foreground, or other programs, if the crosshair applies there.
+    /// Games only matter while showing in games or excluding them.
     fn matched(&self) -> Option<(&Game, Target)> {
         let config = &self.config;
         let game = (self.foreground.as_deref())
             .and_then(|exe| config.games.iter().find(|g| g.matches(exe)));
         let other = (&config.other_programs, Target::Monitor);
         match (config.general.show, game) {
-            (Show::InGames | Show::Everywhere, Some(game)) => Some((game, Target::Window)),
+            (Show::InGames, Some(game)) => Some((game, Target::Window)),
             (Show::InGames, None) | (Show::ExceptListed, Some(_)) => None,
-            (Show::ExceptListed | Show::Everywhere, None) => Some(other),
+            (Show::ExceptListed, None) | (Show::Everywhere, _) => Some(other),
         }
     }
 }
@@ -175,7 +214,7 @@ mod tests {
 
     fn game(exe: &str, crosshair: &str, bindings: Vec<Binding>) -> Game {
         Game {
-            crosshair: crosshair.into(),
+            crosshair: Some(crosshair.into()),
             bindings,
             ..Game::new(exe)
         }
@@ -185,8 +224,8 @@ mod tests {
         let mut c = Config::default();
         c.general.show = show;
         c.games = games;
-        c.other_programs.crosshair = "Plus".into();
-        c.crosshairs = vec![Crosshair::blank("mine")];
+        c.general.crosshair = "Plus".into();
+        c.crosshairs = vec![Crosshair::pixels("mine", crate::Pixels::new(1, 1))];
         c.validate().unwrap();
         c
     }
@@ -231,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn everywhere_uses_each_games_crosshair() {
+    fn everywhere_ignores_the_games_list() {
         let mut e = Engine::new(config(
             Show::Everywhere,
             vec![game("cs2.exe", "mine", vec![])],
@@ -239,6 +278,20 @@ mod tests {
         e.set_foreground(Some("notepad.exe"));
         assert_eq!(shown(&e), Some("Plus"));
         e.set_foreground(Some("cs2.exe"));
+        assert_eq!(shown(&e), Some("Plus"));
+        assert_eq!(e.shown().unwrap().target, Target::Monitor);
+    }
+
+    #[test]
+    fn games_without_their_own_crosshair_follow_the_active_one() {
+        let mut g = game("cs2.exe", "Dot", vec![]);
+        g.crosshair = None;
+        let mut c = config(Show::InGames, vec![g]);
+        let mut e = Engine::new(c.clone());
+        e.set_foreground(Some("cs2.exe"));
+        assert_eq!(shown(&e), Some("Plus"));
+        c.general.crosshair = "mine".into();
+        e.set_config(c);
         assert_eq!(shown(&e), Some("mine"));
     }
 
@@ -335,20 +388,42 @@ mod tests {
             "Dot",
             vec![bind("F6", Action::SetCrosshair("mine".into()))],
         );
-        let mut e = Engine::new(config(Show::Everywhere, vec![g.clone()]));
+        let mut e = Engine::new(config(Show::InGames, vec![g.clone()]));
         e.set_foreground(Some("a.exe"));
         press(&mut e, "F6");
         assert_eq!(shown(&e), Some("mine"));
         e.set_foreground(Some("notepad.exe"));
-        assert_eq!(shown(&e), Some("Plus"));
-        e.set_config(config(Show::Everywhere, vec![g.clone()]));
+        assert_eq!(shown(&e), None);
+        e.set_config(config(Show::InGames, vec![g.clone()]));
         e.set_foreground(Some("a.exe"));
         assert_eq!(shown(&e), Some("mine"));
 
-        let mut without_mine = config(Show::Everywhere, vec![]);
+        let mut without_mine = config(Show::InGames, vec![]);
         without_mine.crosshairs.clear();
         without_mine.games = vec![game("a.exe", "Dot", vec![])];
         e.set_config(without_mine);
         assert_eq!(shown(&e), Some("Dot"));
+    }
+
+    #[test]
+    fn status_says_why_nothing_shows() {
+        let c = config(
+            Show::InGames,
+            vec![game(
+                "cs2.exe",
+                "Dot",
+                vec![bind("Mouse2", Action::HoldToHide)],
+            )],
+        );
+        let mut e = Engine::new(c);
+        e.set_foreground(Some("Code"));
+        assert_eq!(e.status().visibility, Visibility::NotHere);
+        assert_eq!(e.status().program.as_deref(), Some("Code"));
+        e.set_foreground(Some("CS2.exe"));
+        assert_eq!(e.status().visibility, Visibility::Shown("Dot".into()));
+        e.key(Key::MOUSE2, true);
+        assert_eq!(e.status().visibility, Visibility::Hidden);
+        e.set_enabled(false);
+        assert_eq!(e.status().visibility, Visibility::Off);
     }
 }

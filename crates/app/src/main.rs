@@ -28,6 +28,7 @@ pub enum Message {
     Tray(tray::Command),
     Update(updater::State),
     InputUnavailable,
+    Status(crossz_core::Status),
 }
 
 /// Where the updater is, for the settings window and the tray.
@@ -159,6 +160,7 @@ fn main() {
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             gpui_kit::init(cx);
+            ui::init(cx);
             cx.set_global(Store::new(config.clone(), path));
             cx.set_global(Update {
                 state: updater::State::Idle,
@@ -217,6 +219,7 @@ fn handle(message: Message, cx: &mut App) {
             }
         }
         Message::Tray(command) => run(command, cx),
+        Message::Status(status) => Store::set_status(cx, status),
         Message::InputUnavailable => {
             cx.global_mut::<Store>().input_unavailable = true;
             cx.refresh_windows();

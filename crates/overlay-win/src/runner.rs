@@ -53,6 +53,8 @@ struct Runner {
     rendered: Option<Rendered>,
     /// Top-left corner of what's on screen, `None` while hidden.
     placed: Option<(i32, i32)>,
+    /// The status last reported through `on_event`.
+    status: Option<crossz_core::Status>,
 }
 
 pub fn run(
@@ -99,6 +101,7 @@ pub fn run(
         location_hook: None,
         rendered: None,
         placed: None,
+        status: None,
     };
     // SAFETY: no preconditions.
     runner.set_foreground(unsafe { GetForegroundWindow() });
@@ -177,10 +180,11 @@ impl Runner {
         if !any {
             return;
         }
-        if self.engine.enabled() != was_enabled {
+        let enabled_changed = self.engine.enabled() != was_enabled;
+        if enabled_changed {
             (self.on_event)(Event::EnabledChanged(self.engine.enabled()));
         }
-        if self.visible_state() != before {
+        if enabled_changed || self.visible_state() != before {
             self.update();
         }
     }
@@ -213,6 +217,11 @@ impl Runner {
     }
 
     fn update(&mut self) {
+        let status = self.engine.status();
+        if self.status.as_ref() != Some(&status) {
+            self.status = Some(status.clone());
+            (self.on_event)(Event::Status(status));
+        }
         let Some(shown) = self.engine.shown() else {
             self.watch_location(None);
             if self.placed.take().is_some() {

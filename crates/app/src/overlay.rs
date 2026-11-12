@@ -52,6 +52,7 @@ mod imp {
             let message = match event {
                 Event::EnabledChanged(on) => Message::Enabled(on),
                 Event::InputUnavailable => Message::InputUnavailable,
+                Event::Status(status) => Message::Status(status),
             };
             let _ = messages.send_blocking(message);
         });
@@ -86,6 +87,10 @@ mod imp {
                 title: p.title,
             })
             .collect()
+    }
+
+    pub fn main_display_size() -> (u32, u32) {
+        platform::main_display_size()
     }
 
     pub fn load_icon(path: &str) -> Option<Arc<RenderImage>> {
@@ -128,6 +133,10 @@ mod imp {
         Vec::new()
     }
 
+    pub fn main_display_size() -> (u32, u32) {
+        (1920, 1080)
+    }
+
     pub fn load_icon(_: &str) -> Option<Arc<RenderImage>> {
         None
     }
@@ -135,4 +144,4 @@ mod imp {
     pub fn sync_autostart(_: &mut App) {}
 }
 
-pub use imp::{apply, running_programs, set_enabled, start, sync_autostart};
+pub use imp::{apply, main_display_size, running_programs, set_enabled, start, sync_autostart};

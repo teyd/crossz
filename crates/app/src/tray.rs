@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crossz_core::{Arms, Color, Crosshair, Image, Outline, Scale, render};
+use crossz_core::{Arms, Color, Crosshair, Image, Outline, Scale, Shape, render};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -125,21 +125,21 @@ pub fn set_update(state: &crate::updater::State) {
 
 fn icon() -> Icon {
     const SIZE: u32 = 32;
-    let crosshair = Crosshair {
+    let shape = Shape {
         color: Color::rgb(0x4a, 0xde, 0x80),
         arms: Some(Arms {
             length: 8.0,
             thickness: 4.0,
             gap: 3.0,
             t_style: false,
-            opacity: 1.0,
         }),
         outline: Some(Outline {
             thickness: 2.0,
             color: Color::BLACK,
         }),
-        ..Crosshair::blank("tray")
+        ..Shape::blank()
     };
+    let crosshair = Crosshair::shape("tray", shape);
     let image = render(&crosshair, Scale::ONE);
     let rgba = straight_rgba(&image, SIZE);
     Icon::from_rgba(rgba, SIZE, SIZE).expect("tray icon buffer matches its size")

@@ -165,7 +165,7 @@ fn on_key(shared: &Shared, key: Key, down: bool) {
     if let Some(enabled) = enabled_changed {
         (shared.on_event)(Event::EnabledChanged(enabled));
     }
-    if visible_changed {
+    if visible_changed || enabled_changed.is_some() {
         refresh(shared);
     }
 }
