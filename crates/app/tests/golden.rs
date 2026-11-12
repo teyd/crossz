@@ -92,7 +92,7 @@ mod golden {
             .capture_screenshot(handle)
             .expect("offscreen rendering must be available");
         let golden = golden_dir().join(format!("{name}.png"));
-        if std::env::var_os("CROSSZ_UPDATE_GOLDENS").is_some() {
+        if std::env::var_os("CROSSZ_UPDATE_GOLDENS").is_some_and(|v| !v.is_empty()) {
             std::fs::create_dir_all(golden.parent().unwrap()).unwrap();
             actual.save(&golden).unwrap();
             return;
