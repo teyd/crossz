@@ -9,8 +9,7 @@ Crosshair overlay for borderless windowed games on Windows. Rust workspace:
 
 ## Commands
 
-- `mise run check`: the local loop. fmt check, clippy `-D warnings`, every test (including the UI integration and screenshot tests) and the Windows cross-check. Run it before pushing.
-- `/review` (OpenCode command, `.opencode/commands/review.md`): read-only review of the branch against `main`, run before pushing. It reports bugs, then missing tests, citing file:line. There is no review bot; Pullfrog is gone.
+- `mise run check`: the local loop. fmt check, clippy `-D warnings`, every test (including the UI integration and screenshot tests) and the Windows cross-check. Run it before pushing. There is no review bot; Pullfrog is gone.
 - `mise run goldens`: rewrite the screenshot PNGs in `crates/app/tests/golden/` after an intended UI change, then look at the images and the diff. Screenshots are macOS renders and only compared on macOS (the test is a no-op elsewhere).
 - `mise run core`: fmt check, clippy and tests for core (runs anywhere; this is what the Linux CI job runs)
 - `mise run check-win`: cross-clippy the Win32 overlay from macOS/Linux (the app itself needs `llvm-rc` to cross-build, so CI builds it on Windows)
