@@ -1,3 +1,4 @@
 /target
 .DS_Store
 *.pdb
+crates/app/tests/golden/*.actual.png

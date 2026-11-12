@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crossz_core::{Color, Crosshair, Pixels, Scale, Show, presets, render};
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, WindowExt as _,
@@ -232,6 +233,8 @@ fn gallery(tiles: &[Tile], this: WeakEntity<SettingsView>, cx: &App) -> AnyEleme
             let (click_this, menu_this) = (this.clone(), this.clone());
             v_flex()
                 .id(SharedString::from(format!("tile-{}", tile.name)))
+                .test_support()
+                .aria_label(tile.name.clone())
                 .w(px(THUMBNAIL + 44.))
                 .p_2()
                 .gap_1()

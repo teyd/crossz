@@ -1,6 +1,3 @@
-// Release builds are tray apps; a console window would pop up next to the game.
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
-
 mod assets;
 mod capture;
 #[cfg(unix)]
@@ -104,7 +101,8 @@ fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
-fn main() {
+/// Runs crossz: the single-instance check, config, overlay, tray and the settings window.
+pub fn run() {
     let args = args();
     let (messages, inbox) = async_channel::unbounded();
     #[cfg(unix)]
@@ -215,10 +213,10 @@ fn handle(message: Message, cx: &mut App) {
         Message::Enabled(enabled) => tray::set_enabled(enabled),
         Message::Menu(id) => {
             if let Some(command) = tray::command(&id) {
-                run(command, cx);
+                run_command(command, cx);
             }
         }
-        Message::Tray(command) => run(command, cx),
+        Message::Tray(command) => run_command(command, cx),
         Message::Status(status) => Store::set_status(cx, status),
         Message::InputUnavailable => {
             cx.global_mut::<Store>().input_unavailable = true;
@@ -232,11 +230,40 @@ fn handle(message: Message, cx: &mut App) {
     }
 }
 
-fn run(command: tray::Command, cx: &mut App) {
+fn run_command(command: tray::Command, cx: &mut App) {
     match command {
         tray::Command::OpenSettings => ui::open(cx),
         tray::Command::SetEnabled(enabled) => overlay::set_enabled(enabled, cx),
         tray::Command::RestartToUpdate => Update::restart(cx),
         tray::Command::Quit => cx.quit(),
+    }
+}
+
+/// What `tests/golden.rs` needs to render the settings window; not a public API.
+#[doc(hidden)]
+pub mod testing {
+    use std::path::PathBuf;
+
+    use crossz_core::Config;
+    use gpui_kit::{App, AppContext as _, Entity, Window};
+
+    use crate::{Update, store::Store, ui, updater};
+
+    /// Sets up the app's globals the way `run` does, on a fixed config, path and screen.
+    pub fn init(cx: &mut App, config: Config, path: PathBuf, screen: (u32, u32), page: &str) {
+        gpui_kit::init(cx);
+        ui::init(cx);
+        let mut store = Store::new(config, path);
+        store.screen = screen;
+        cx.set_global(store);
+        cx.set_global(Update {
+            state: updater::State::Idle,
+            messages: async_channel::unbounded().0,
+        });
+        ui::show_page_on_open(cx, page);
+    }
+
+    pub fn settings_view(window: &mut Window, cx: &mut App) -> Entity<ui::SettingsView> {
+        cx.new(|cx| ui::SettingsView::new(window, cx))
     }
 }

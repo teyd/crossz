@@ -4,11 +4,14 @@ mod crosshairs;
 mod games;
 mod general;
 mod layout;
+#[cfg(test)]
+mod ui_tests;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crossz_core::{Chord, Color, Crosshair, Pixels, Resolution, Scale, Show, Visibility};
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::{
     ActiveTheme as _,
     alert::Alert,
@@ -24,8 +27,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle, Global, Hsla,
     ImageSource, InteractiveElement as _, IntoElement, KeyDownEvent, MouseDownEvent,
-    ParentElement as _, Render, RenderImage, Rgba, SharedString, Styled as _, Subscription,
-    TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions, div, img, px, size,
+    ParentElement as _, Render, RenderImage, Rgba, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowOptions,
+    div, img, px, size,
 };
 
 use crate::store::Store;
@@ -59,6 +63,15 @@ impl Page {
 struct LastPage(Page);
 
 impl Global for LastPage {}
+
+/// Opens the window on the page called `name` (for the screenshot tests).
+pub(crate) fn show_page_on_open(cx: &mut App, name: &str) {
+    let page = Page::ALL
+        .into_iter()
+        .find(|p| p.title().eq_ignore_ascii_case(name))
+        .unwrap_or_else(|| panic!("no page called {name}"));
+    cx.set_global(LastPage(page));
+}
 
 /// Registers the settings window's key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
@@ -170,7 +183,7 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let paint_color =
             cx.new(|cx| ColorPickerState::new(window, cx).default_value(to_hsla(Color::WHITE)));
         let new_game =
@@ -416,7 +429,16 @@ impl SettingsView {
                         .gap_2()
                         .pb_3()
                         .child(div().flex_none().mt_1p5().size_2().rounded_full().bg(color))
-                        .child(div().flex_1().min_w_0().text_sm().child(text)),
+                        .child(
+                            div()
+                                .id("status")
+                                .test_support()
+                                .aria_label(text.clone())
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(text),
+                        ),
                 )
             })
             .child(
