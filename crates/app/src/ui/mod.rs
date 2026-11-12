@@ -118,6 +118,8 @@ struct Paint {
     /// The Crosshairs page shows the editor for the selected crosshair instead of the
     /// gallery.
     open: bool,
+    /// The editor just opened and should take focus, so its shortcuts work at once.
+    focus_pending: bool,
     /// The crosshair the undo history belongs to.
     target: String,
     /// Focused by clicking the canvas, so undo and redo shortcuts reach the editor.
@@ -263,6 +265,7 @@ impl SettingsView {
             recording: None,
             paint: Paint {
                 open: false,
+                focus_pending: false,
                 target: String::new(),
                 focus: cx.focus_handle(),
                 tool: Tool::Pencil,
@@ -466,6 +469,10 @@ impl Render for SettingsView {
             Page::Games => games::page(self, this.clone(), cx),
             Page::General => general::page(self, this.clone(), cx),
         };
+        if self.paint.focus_pending && self.paint.open && self.page == Page::Crosshairs {
+            self.paint.focus_pending = false;
+            window.focus(&self.paint.focus, cx);
+        }
         let selected_tab = Page::ALL.iter().position(|p| *p == self.page).unwrap_or(0);
         let store = Store::get(cx);
         let error = store.error.clone();

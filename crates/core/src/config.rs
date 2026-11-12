@@ -189,10 +189,17 @@ impl Default for Config {
 
 impl Config {
     pub fn parse(text: &str, path: &Path) -> Result<Config, Error> {
-        let config: Config = toml::from_str(text).map_err(|e| Error::Parse {
+        let mut config: Config = toml::from_str(text).map_err(|e| Error::Parse {
             path: path.to_owned(),
             source: Box::new(e),
         })?;
+        // Before `general.crosshair` existed, other programs had their own crosshair; that
+        // one becomes the selected crosshair.
+        let has_selected = (text.parse::<toml::Table>().ok())
+            .is_some_and(|t| t.get("general").and_then(|g| g.get("crosshair")).is_some());
+        if !has_selected && let Some(name) = config.other_programs.crosshair.take() {
+            config.general.crosshair = name;
+        }
         config.validate()?;
         Ok(config)
     }
@@ -404,5 +411,18 @@ mod tests {
         assert_eq!(created, Config::default());
         assert_eq!(Config::load_or_create(&path).unwrap(), (created, false));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn old_other_programs_crosshair_becomes_the_selected_one() {
+        let old = "[other_programs]\ncrosshair = \"Dot\"\n";
+        let config = Config::parse(old, Path::new("old.toml")).unwrap();
+        assert_eq!(config.general.crosshair, "Dot");
+        assert_eq!(config.other_programs.crosshair, None);
+
+        let new = "[general]\ncrosshair = \"T\"\n\n[other_programs]\ncrosshair = \"Dot\"\n";
+        let config = Config::parse(new, Path::new("new.toml")).unwrap();
+        assert_eq!(config.general.crosshair, "T");
+        assert_eq!(config.other_programs.crosshair.as_deref(), Some("Dot"));
     }
 }

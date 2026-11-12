@@ -166,7 +166,8 @@ impl Store {
             return None;
         }
         let reported = self.status.as_ref();
-        if let Some(reported) = reported
+        if self.enabled
+            && let Some(reported) = reported
             && reported.visibility == Visibility::Hidden
         {
             return Some(reported.clone());

@@ -67,7 +67,11 @@ pub(super) fn page(
     let store = Store::get(cx);
     let selected = store.config.general.crosshair.clone();
     // Deleting the edited crosshair selects a built-in one, which ends editing.
-    view.paint.open &= store.active_is_custom();
+    if view.paint.open && !store.active_is_custom() {
+        view.paint.open = false;
+        view.paint.stroke = None;
+        view.paint.last = None;
+    }
     if view.paint.open {
         return editor_page(view, this, selected, cx);
     }
@@ -150,15 +154,30 @@ fn editor_page(
                 .label("Done")
                 .on_click(move |_, _, cx| set_editing(&done, false, cx)),
         );
-    vec![
-        header.into_any_element(),
-        paint_section(view, this, cx).into_any_element(),
-        details_section(view, cx).into_any_element(),
-    ]
+    // Shortcuts work anywhere in the editor; it takes focus when it opens.
+    let (undo, redo, close) = (this.clone(), this.clone(), this.clone());
+    let editor = v_flex()
+        .key_context(PAINT_CONTEXT)
+        .track_focus(&view.paint.focus)
+        .on_action(move |_: &Undo, _, cx| {
+            let _ = undo.update(cx, |v, cx| v.undo(false, cx));
+        })
+        .on_action(move |_: &Redo, _, cx| {
+            let _ = redo.update(cx, |v, cx| v.undo(true, cx));
+        })
+        .on_action(move |_: &CloseEditor, _, cx| set_editing(&close, false, cx))
+        .gap_8()
+        .child(header)
+        .child(paint_section(view, this, cx))
+        .child(details_section(view, cx));
+    vec![editor.into_any_element()]
 }
 
 fn set_editing(this: &WeakEntity<SettingsView>, open: bool, cx: &mut App) {
     let _ = this.update(cx, |v, cx| {
+        // A stroke still being drawn is saved, not lost with the canvas.
+        v.end_stroke(cx);
+        v.paint.focus_pending = open;
         v.paint.open = open;
         cx.notify();
     });
@@ -424,21 +443,7 @@ fn paint_section(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) 
                     });
                 }
             };
-            let undo_this = this.clone();
-            let redo_this = this.clone();
             v_flex()
-                .key_context(PAINT_CONTEXT)
-                .track_focus(&focus)
-                .on_action(move |_: &Undo, _, cx| {
-                    let _ = undo_this.update(cx, |v, cx| v.undo(false, cx));
-                })
-                .on_action(move |_: &Redo, _, cx| {
-                    let _ = redo_this.update(cx, |v, cx| v.undo(true, cx));
-                })
-                .on_action({
-                    let this = this.clone();
-                    move |_: &CloseEditor, _, cx| set_editing(&this, false, cx)
-                })
                 .w_full()
                 .gap_3()
                 .child(
