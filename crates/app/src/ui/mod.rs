@@ -4,6 +4,7 @@ mod crosshairs;
 mod games;
 mod general;
 mod layout;
+mod paint;
 #[cfg(test)]
 mod ui_tests;
 
@@ -75,7 +76,7 @@ pub(crate) fn show_page_on_open(cx: &mut App, name: &str) {
 
 /// Registers the settings window's key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
-    crosshairs::bind_keys(cx);
+    paint::bind_keys(cx);
 }
 
 /// Shows the settings window, reusing it if it's already open.
@@ -133,6 +134,8 @@ struct Paint {
     open: bool,
     /// The editor just opened and should take focus, so its shortcuts work at once.
     focus_pending: bool,
+    /// What Cancel restores, while the editor is open.
+    session: Option<paint::Session>,
     /// The crosshair the undo history belongs to.
     target: String,
     /// Focused by clicking the canvas, so undo and redo shortcuts reach the editor.
@@ -279,6 +282,7 @@ impl SettingsView {
             paint: Paint {
                 open: false,
                 focus_pending: false,
+                session: None,
                 target: String::new(),
                 focus: cx.focus_handle(),
                 tool: Tool::Pencil,

@@ -263,6 +263,11 @@ pub mod testing {
         ui::show_page_on_open(cx, page);
     }
 
+    /// The assets the app registers, so screenshots show every icon.
+    pub fn assets() -> impl gpui_kit::AssetSource {
+        crate::assets::Assets
+    }
+
     pub fn settings_view(window: &mut Window, cx: &mut App) -> Entity<ui::SettingsView> {
         cx.new(|cx| ui::SettingsView::new(window, cx))
     }

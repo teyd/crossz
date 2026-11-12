@@ -24,11 +24,10 @@ mod golden {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
-    use crossz_core::Config;
+    use crossz_core::{Color, Config, Crosshair, Pixels};
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
-        AnyWindowHandle, Bounds, HeadlessAppContext, WindowBounds, WindowOptions, assets::Assets,
-        px, size,
+        AnyWindowHandle, Bounds, HeadlessAppContext, WindowBounds, WindowOptions, px, size,
     };
 
     /// Per-channel difference that still counts as the same pixel (anti-aliasing noise).
@@ -45,7 +44,7 @@ mod golden {
     fn scene(page: &str, config: Config, path: PathBuf) -> (HeadlessAppContext, AnyWindowHandle) {
         let mut cx = HeadlessAppContext::with_platform(
             gpui_kit::platform::current_platform(true).text_system(),
-            Arc::new(Assets),
+            Arc::new(crossz::testing::assets()),
             gpui_kit::platform::current_headless_renderer,
         );
         cx.update(|cx| crossz::testing::init(cx, config, path, (1920, 1080), page));
@@ -145,6 +144,19 @@ mod golden {
         }
     }
 
+    /// A config with one small drawn crosshair of the user's, selected.
+    fn with_own_crosshair() -> Config {
+        let mut pixels = Pixels::new(9, 9);
+        for i in 1..8 {
+            pixels.set(4, i, Some(Color::WHITE));
+            pixels.set(i, 4, Some(Color::WHITE));
+        }
+        let mut config = Config::default();
+        config.crosshairs.push(Crosshair::pixels("Mine", pixels));
+        config.general.crosshair = "Mine".into();
+        config
+    }
+
     /// Pixel rectangles `[x0, y0, x1, y1]` to leave out of a comparison.
     type Mask = &'static [[u32; 4]];
 
@@ -163,7 +175,12 @@ mod golden {
                 } else {
                     PathBuf::from("/crossz/config.toml")
                 };
-                let (mut cx, handle) = scene(page, Config::default(), path);
+                let config = if name == "crosshairs-yours" {
+                    with_own_crosshair()
+                } else {
+                    Config::default()
+                };
+                let (mut cx, handle) = scene(page, config, path);
                 render(&mut cx, handle, act);
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     assert_golden(&mut cx, handle, name, mask)
@@ -176,6 +193,7 @@ mod golden {
                 }
             };
         check("crosshairs", "Crosshairs", &[], |_, _| {});
+        check("crosshairs-yours", "Crosshairs", &[], |_, _| {});
         check("games", "Games", &[], |_, _| {});
         // The "crossz <version>" line changes with every release.
         check("general", "General", &[[630, 530, 800, 572]], |_, _| {});
