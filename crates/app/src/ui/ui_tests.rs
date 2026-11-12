@@ -62,22 +62,26 @@ fn clicking_a_crosshair_selects_and_saves_it(cx: &mut TestAppContext) {
     assert_eq!(saved.general.crosshair, "Dot");
 }
 
-#[gpui_kit::test]
-fn a_new_crosshair_opens_the_editor_and_escape_closes_it(cx: &mut TestAppContext) {
-    let (handle, _) = open(cx, "editor", Config::default());
-
+/// Opens the editor with New crosshair; the new crosshair is selected.
+fn open_new_editor(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("crosshair-done").is_none());
+        assert!(window.try_find("crosshair-save").is_none());
         window.click("crosshair-new", cx);
     })
     .unwrap();
     cx.run_until_parked();
     assert_eq!(selected(cx), "My crosshair");
+}
+
+#[gpui_kit::test]
+fn escape_cancels_a_new_crosshair_and_brings_back_the_old_selection(cx: &mut TestAppContext) {
+    let (handle, path) = open(cx, "cancel", Config::default());
+    open_new_editor(cx, handle);
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("crosshair-done").is_some());
+        assert!(window.try_find("crosshair-save").is_some());
         // The editor takes focus when it opens, so Escape works without a click first.
         window.press("escape", cx);
     })
@@ -86,10 +90,36 @@ fn a_new_crosshair_opens_the_editor_and_escape_closes_it(cx: &mut TestAppContext
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("crosshair-done").is_none());
+        assert!(window.try_find("crosshair-save").is_none());
         assert!(window.try_find("crosshair-new").is_some());
     })
     .unwrap();
+    assert_eq!(selected(cx), "Plus");
+    let saved = Config::load_or_create(&path).unwrap().0;
+    assert!(saved.crosshairs.is_empty());
+}
+
+#[gpui_kit::test]
+fn save_keeps_a_new_crosshair(cx: &mut TestAppContext) {
+    let (handle, path) = open(cx, "save", Config::default());
+    open_new_editor(cx, handle);
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("crosshair-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("crosshair-save").is_none());
+        assert!(window.try_find("tile-My crosshair").is_some());
+    })
+    .unwrap();
+    assert_eq!(selected(cx), "My crosshair");
+    let saved = Config::load_or_create(&path).unwrap().0;
+    assert_eq!(saved.crosshairs[0].name, "My crosshair");
 }
 
 #[cfg(any(windows, target_os = "macos"))]
