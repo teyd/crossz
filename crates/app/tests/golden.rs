@@ -1,25 +1,23 @@
 //! Screenshot tests: each page of the real settings window, rendered headless and compared
 //! with the PNGs in `tests/golden/`.
 //!
-//! These need GPUI's offscreen Metal renderer, which only runs on the main thread, so this
-//! target has no libtest harness (like gpui-kit's own rendering tests). The PNGs are macOS
-//! renders. After an intended UI change, rewrite them with `mise run goldens` and look at the
-//! diff before committing.
+//! Linux is the one canonical renderer (wgpu on Mesa's lavapipe software Vulkan), because
+//! text anti-aliasing differs between machines: a golden rendered on one Mac fails on
+//! another. On macOS and Windows this target does nothing. CI checks the goldens on Linux;
+//! refresh them after an intended UI change with `mise run goldens`, which has CI render
+//! them, and look at the images before committing.
+//!
+//! The target has no libtest harness: the headless renderer wants the main thread (like
+//! gpui-kit's own rendering tests).
 
 fn main() {
-    // Text anti-aliasing differs by a few hundred pixels between Macs (OS and GPU), so a
-    // golden from one machine can't gate another; CI skips them and `mise run check` runs them.
-    if std::env::var_os("CI").is_some() {
-        println!("golden: skipped on CI; run `mise run check` locally");
-        return;
-    }
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "linux")]
     golden::run();
-    #[cfg(not(target_os = "macos"))]
-    println!("golden: skipped; the screenshots are macOS renders");
+    #[cfg(not(target_os = "linux"))]
+    println!("golden: skipped; the screenshots are Linux renders, checked on CI");
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_os = "linux")]
 mod golden {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
