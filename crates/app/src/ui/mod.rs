@@ -34,6 +34,11 @@ struct SettingsWindow(AnyWindowHandle);
 
 impl Global for SettingsWindow {}
 
+/// Registers the settings window's key bindings. Call once at startup.
+pub fn init(cx: &mut App) {
+    crosshairs::bind_keys(cx);
+}
+
 /// Shows the settings window, reusing it if it's already open.
 pub fn open(cx: &mut App) {
     if let Some(handle) = cx.try_global::<SettingsWindow>().map(|w| w.0)
@@ -86,9 +91,13 @@ enum Tool {
 struct Paint {
     /// The crosshair the undo history belongs to.
     target: String,
+    /// Focused by clicking the canvas, so undo and redo shortcuts reach the editor.
+    focus: FocusHandle,
     tool: Tool,
     mirror: bool,
     stroke: Option<Pixels>,
+    /// The last cell painted in the current stroke.
+    last: Option<(u32, u32)>,
     undo: Vec<Pixels>,
     redo: Vec<Pixels>,
 }
@@ -182,9 +191,11 @@ impl SettingsView {
             recording: None,
             paint: Paint {
                 target: String::new(),
+                focus: cx.focus_handle(),
                 tool: Tool::Pencil,
                 mirror: true,
                 stroke: None,
+                last: None,
                 undo: Vec::new(),
                 redo: Vec::new(),
             },
@@ -309,18 +320,14 @@ impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = Store::get(cx).selected_crosshair.clone();
         if self.paint.target != selected {
-            self.paint = Paint {
-                target: selected,
-                stroke: None,
-                undo: Vec::new(),
-                redo: Vec::new(),
-                ..self.paint
-            };
+            self.paint.target = selected;
+            self.paint.stroke = None;
+            self.paint.undo.clear();
+            self.paint.redo.clear();
         }
         let this = cx.entity().downgrade();
         let preview = self.preview_panel(window, cx);
-        let library = crosshairs::library_page(self, window, cx);
-        let editor = crosshairs::editor_page(self, this.clone(), cx);
+        let crosshairs = crosshairs::page(self, this.clone(), window, cx);
         let store = Store::get(cx);
         let error = store.error.clone();
         let input_unavailable = store.input_unavailable;
@@ -354,8 +361,7 @@ impl Render for SettingsView {
                             .sidebar_width(px(180.))
                             .pages([
                                 games::page(self, this.clone(), cx),
-                                library,
-                                editor,
+                                crosshairs,
                                 general::page(self, this, cx),
                             ]),
                     ),

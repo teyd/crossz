@@ -95,8 +95,9 @@ impl Pixels {
     /// The same drawing on a canvas of a new size, staying centered.
     pub fn resized(&self, width: u32, height: u32) -> Pixels {
         let mut out = Pixels::new(width, height);
-        let dx = (out.width as i64 - self.width as i64) / 2;
-        let dy = (out.height as i64 - self.height as i64) / 2;
+        // Line up the pixels just right of and below each center, whatever the parity.
+        let dx = out.width as i64 / 2 - self.width as i64 / 2;
+        let dy = out.height as i64 / 2 - self.height as i64 / 2;
         for y in 0..self.height {
             for x in 0..self.width {
                 let (tx, ty) = (x as i64 + dx, y as i64 + dy);
@@ -236,6 +237,17 @@ mod tests {
             assert_eq!(p.get(x, y), Some(Color::WHITE));
         }
         assert_eq!(p.get(1, 1), None);
+    }
+
+    #[test]
+    fn resizing_even_to_odd_keeps_the_center() {
+        // A 2x2 dot around the center of 4x4 lands on the center pixel of 3x3 and the
+        // ones before it, matching how both sizes are drawn around the crosshair center.
+        let mut p = Pixels::new(4, 4);
+        p.set(2, 2, Some(Color::WHITE));
+        let r = p.resized(3, 3);
+        assert_eq!(r.get(1, 1), Some(Color::WHITE));
+        assert_eq!(r.resized(4, 4), p);
     }
 
     #[test]

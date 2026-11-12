@@ -81,6 +81,7 @@ pub(super) fn page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App
                         Button::new("master-toggle-clear")
                             .ghost()
                             .icon(IconName::X)
+                            .tooltip("Clear")
                             .disabled(master.is_none())
                             .on_click(|_, _, cx| {
                                 Store::edit(cx, |c| c.general.master_toggle = None);

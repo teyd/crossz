@@ -11,15 +11,15 @@ use gpui_kit::component::{
     form::{Field, Form},
     h_flex,
     input::{Input, NumberInput},
-    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     setting::{SettingField, SettingGroup, SettingItem, SettingPage},
     switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Context, IntoElement, ParentElement as _, RenderImage, SharedString,
-    Styled as _, WeakEntity, Window, div, img, px,
+    AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    RenderImage, SharedString, Styled as _, WeakEntity, Window, div, img, px,
 };
 
 use super::{Recording, SettingsView, chord_button, options};
@@ -66,16 +66,16 @@ pub(super) fn page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App
             mode,
             SettingGroup::new()
                 .title("Games")
-                .description("Each game has its own crosshair, stretch, offset and binds.")
-                .items(games)
-                .item(add),
+                .description("Each game has its own crosshair, stretch, offset and binds. Right-click a game for more.")
+                .item(add)
+                .items(games),
         ],
         Show::ExceptListed => vec![
             mode,
             SettingGroup::new()
                 .title("Hidden in")
-                .items(games)
-                .item(add),
+                .item(add)
+                .items(games),
             SettingGroup::new().title("Everywhere else").item(game_row(
                 None,
                 config.other_programs.clone(),
@@ -117,10 +117,44 @@ fn game_row(
         };
         let (exe, remove_exe) = (game.exe.clone(), game.exe.clone());
         let editable = index.is_none() || show == Show::InGames;
+        let toggles = index.is_some() && show == Show::InGames;
         let this = this.clone();
+        let menu_this = this.clone();
+        let (menu_exe, enabled) = (game.exe.clone(), game.enabled);
         h_flex()
+            .id(id("row"))
             .w_full()
             .gap_3()
+            .context_menu(move |menu, _, _| {
+                let (edit_this, toggle_exe, remove_exe) =
+                    (menu_this.clone(), menu_exe.clone(), menu_exe.clone());
+                menu.when(editable, |menu| {
+                    menu.item(PopupMenuItem::new("Edit…").on_click(move |_, window, cx| {
+                        open_editor(index, edit_this.clone(), window, cx)
+                    }))
+                })
+                .when(toggles, |menu| {
+                    menu.item(
+                        PopupMenuItem::new(if enabled { "Disable" } else { "Enable" }).on_click(
+                            move |_, _, cx| {
+                                Store::edit(cx, |c| {
+                                    if let Some(g) =
+                                        c.games.iter_mut().find(|g| g.exe == toggle_exe)
+                                    {
+                                        g.enabled = !g.enabled;
+                                    }
+                                });
+                            },
+                        ),
+                    )
+                })
+                .when(index.is_some(), |menu| {
+                    menu.separator()
+                        .item(PopupMenuItem::new("Remove").on_click(move |_, _, cx| {
+                            Store::edit(cx, |c| c.games.retain(|g| g.exe != remove_exe));
+                        }))
+                })
+            })
             .child(program_icon(icon, cx))
             .child(
                 v_flex()
@@ -140,13 +174,13 @@ fn game_row(
                     Button::new(id("edit"))
                         .outline()
                         .icon(IconName::Pencil)
-                        .label("Edit")
+                        .label("Edit…")
                         .on_click(move |_, window, cx| {
                             open_editor(index, this.clone(), window, cx)
                         }),
                 )
             })
-            .when(index.is_some() && show == Show::InGames, |row| {
+            .when(toggles, |row| {
                 row.child(Switch::new(id("enabled")).checked(game.enabled).on_change(
                     move |on: &bool, _, cx| {
                         let on = *on;
@@ -163,6 +197,7 @@ fn game_row(
                     Button::new(id("remove"))
                         .ghost()
                         .icon(IconName::Trash)
+                        .tooltip("Remove")
                         .on_click(move |_, _, cx| {
                             Store::edit(cx, |c| c.games.retain(|g| g.exe != remove_exe));
                         }),
@@ -215,7 +250,6 @@ fn add_game_row(view: &SettingsView, show: Show) -> SettingItem {
             .gap_2()
             .child(
                 Button::new("game-running")
-                    .primary()
                     .icon(IconName::Plus)
                     .label(format!("Add a running {what}"))
                     .dropdown_caret(true)
@@ -470,7 +504,7 @@ fn bind_row(
     this: WeakEntity<SettingsView>,
     cx: &App,
 ) -> AnyElement {
-    let id = |part: &str| SharedString::from(format!("bind-{part}-{index}"));
+    let id = |part: &str| SharedString::from(format!("bind-{part}-{index}-{}", binding.trigger));
     let action = binding.action.clone();
     let switch_to = match &binding.action {
         Action::SetCrosshair(name) => Some(name.clone()),
@@ -549,6 +583,7 @@ fn bind_row(
             Button::new(id("remove"))
                 .ghost()
                 .icon(IconName::Trash)
+                .tooltip("Remove bind")
                 .on_click(move |_, _, cx| {
                     Store::edit_game(cx, |g| {
                         if index < g.bindings.len() {

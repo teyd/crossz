@@ -159,6 +159,7 @@ fn main() {
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             gpui_kit::init(cx);
+            ui::init(cx);
             cx.set_global(Store::new(config.clone(), path));
             cx.set_global(Update {
                 state: updater::State::Idle,

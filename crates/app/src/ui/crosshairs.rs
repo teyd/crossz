@@ -1,32 +1,36 @@
-//! The crosshair library (built-in and your own) and the paint editor for your own.
+//! The Crosshairs page: built-in and your own crosshairs, where clicking one uses it, and
+//! below them the paint editor for the selected one of yours.
 
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crossz_core::{Color, Crosshair, Pixels, Scale, presets, render};
+use crossz_core::{Color, Crosshair, Pixels, Scale, Show, presets, render};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Selectable as _,
-    button::{Button, ButtonGroup, ButtonVariants as _},
+    ActiveTheme as _, Disableable as _, Selectable as _, WindowExt as _,
+    button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _},
     color_picker::ColorPicker,
     h_flex,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage},
     switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Bounds, Context, Hsla, ImageSource, InteractiveElement as _, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels as Px, RenderImage,
-    SharedString, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, canvas, div,
-    fill, img, point, px, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Hsla, ImageSource, InteractiveElement as _,
+    IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
+    Pixels as Px, RenderImage, SharedString, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, Window, actions, canvas, div, fill, img, point, px, size,
 };
 
-use super::{SettingsView, Tool, from_hsla, to_hsla};
+use super::{SettingsView, Tool, from_hsla, options, to_hsla};
 use crate::store::{self, Store};
 
+actions!(crossz_paint, [Undo, Redo]);
+
+const PAINT_CONTEXT: &str = "PaintEditor";
 const THUMBNAIL: f32 = 64.0;
 const CANVAS: f32 = 440.0;
 const SIZES: [u32; 9] = [9, 11, 13, 15, 17, 21, 25, 33, 41];
@@ -40,202 +44,255 @@ const SWATCHES: [Color; 7] = [
     Color::rgb(255, 0, 0),
 ];
 
-pub(super) fn library_page(
+pub(super) fn bind_keys(cx: &mut App) {
+    let (undo, redo) = if cfg!(target_os = "macos") {
+        ("cmd-z", "cmd-shift-z")
+    } else {
+        ("ctrl-z", "ctrl-shift-z")
+    };
+    cx.bind_keys([
+        KeyBinding::new(undo, Undo, Some(PAINT_CONTEXT)),
+        KeyBinding::new(redo, Redo, Some(PAINT_CONTEXT)),
+    ]);
+}
+
+pub(super) fn page(
     view: &mut SettingsView,
+    this: WeakEntity<SettingsView>,
     window: &mut Window,
     cx: &mut App,
 ) -> SettingPage {
     let store = Store::get(cx);
     let selected = store.selected_crosshair.clone();
     let is_custom = store.crosshair_is_custom();
-    let game_label = store.game_label();
     let custom: Vec<Crosshair> = store.config.crosshairs.clone();
-    let mut tiles = |crosshairs: &[Crosshair]| -> Vec<(String, Arc<RenderImage>, bool)> {
+    let mut tiles = |crosshairs: &[Crosshair]| -> Vec<Tile> {
         crosshairs
             .iter()
             .map(|c| {
                 let key = format!("thumb:{}", c.name);
                 let (image, _) = view.image(key, c, Scale::ONE, THUMBNAIL, window, cx);
-                (c.name.clone(), image, c.name == selected)
+                Tile {
+                    name: c.name.clone(),
+                    image,
+                    selected: c.name == selected,
+                    custom: !presets::is_preset(&c.name),
+                }
             })
             .collect()
     };
     let (builtin, yours) = (tiles(presets::all()), tiles(&custom));
 
-    let actions = SettingItem::render(move |_, _, cx| {
-        let used = Store::get(cx).game().crosshair == Store::get(cx).selected_crosshair;
-        h_flex()
-            .w_full()
-            .gap_2()
-            .child(
-                Button::new("crosshair-use")
-                    .primary()
-                    .label(if used {
-                        format!("Used in {game_label}")
-                    } else {
-                        format!("Use in {game_label}")
-                    })
-                    .disabled(used)
-                    .on_click(|_, _, cx| {
-                        let name = Store::get(cx).selected_crosshair.clone();
-                        Store::edit_game(cx, |g| g.crosshair = name);
-                    }),
-            )
-            .child(
-                Button::new("crosshair-copy")
-                    .outline()
-                    .icon(IconName::Pencil)
-                    .label(if is_custom { "Duplicate" } else { "Customize" })
-                    .on_click(|_, _, cx| copy_selected(cx)),
-            )
-            .when(is_custom, |row| {
-                row.child(
-                    Button::new("crosshair-delete")
-                        .danger()
-                        .icon(IconName::Trash)
-                        .label("Delete")
-                        .on_click(|_, _, cx| {
-                            let name = Store::get(cx).selected_crosshair.clone();
-                            Store::edit(cx, |c| store::remove_crosshair(c, &name));
-                        }),
-                )
-            })
-    });
+    let mut groups = vec![
+        SettingGroup::new().item(scope_item(cx)),
+        SettingGroup::new()
+            .title("Built-in")
+            .item(SettingItem::render(move |_, _, cx| gallery(&builtin, cx))),
+        SettingGroup::new()
+            .title("Yours")
+            .item(SettingItem::render(move |_, _, cx| {
+                if yours.is_empty() {
+                    return div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("None yet. Create a new crosshair, or right-click a built-in one and duplicate it to paint your own version.")
+                        .into_any_element();
+                }
+                gallery(&yours, cx)
+            })),
+    ];
+    if is_custom {
+        groups.push(paint_group(view, this));
+        groups.push(details_group());
+    } else {
+        groups.push(
+            SettingGroup::new().title("Edit").item(SettingItem::render(move |_, _, cx| {
+                h_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Built-in crosshairs can't be changed. Duplicate one to paint your own version."),
+                    )
+                    .child(
+                        Button::new("crosshair-duplicate")
+                            .outline()
+                            .label("Duplicate")
+                            .on_click(|_, _, cx| duplicate_selected(cx)),
+                    )
+            })),
+        );
+    }
 
-    SettingPage::new("Library")
+    SettingPage::new("Crosshairs")
         .icon(IconName::Crosshair)
-        .groups([
-            SettingGroup::new()
-                .title("Built-in")
-                .description("Always available. Customize one to paint your own version.")
-                .item(SettingItem::render(move |_, _, cx| gallery(&builtin, cx))),
-            SettingGroup::new()
-                .title("Yours")
-                .description("Drawn in the Editor.")
-                .item(SettingItem::render(move |_, _, cx| {
-                    v_flex()
-                        .w_full()
-                        .gap_3()
-                        .when(!yours.is_empty(), |this| this.child(gallery(&yours, cx)))
-                        .child(
-                            h_flex().child(
-                                Button::new("crosshair-new")
-                                    .outline()
-                                    .icon(IconName::Plus)
-                                    .label("New crosshair")
-                                    .on_click(|_, _, cx| new_crosshair(cx)),
-                            ),
-                        )
-                })),
-            SettingGroup::new().title("Selected").item(actions),
-        ])
+        .title_suffix(|_, _| {
+            Button::new("crosshair-new")
+                .icon(IconName::Plus)
+                .label("New crosshair")
+                .on_click(|_, _, cx| new_crosshair(cx))
+        })
+        .groups(groups)
 }
 
-fn gallery(tiles: &[(String, Arc<RenderImage>, bool)], cx: &App) -> AnyElement {
+/// Which program the page's choice applies to; clicking a crosshair uses it there.
+fn scope_item(cx: &App) -> SettingItem {
+    let config = &Store::get(cx).config;
+    let scopes: Vec<(String, String)> = match config.general.show {
+        Show::InGames => (config.games.iter().enumerate())
+            .map(|(i, g)| (format!("game:{i}"), g.display_name().to_owned()))
+            .collect(),
+        Show::ExceptListed => vec![("other".into(), "Every other program".into())],
+        Show::Everywhere => vec![("other".into(), "All programs".into())],
+    };
+    if scopes.is_empty() {
+        return SettingItem::render(|_, _, cx| {
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Add a game on the Games page to choose its crosshair here.")
+        });
+    }
+    SettingItem::new(
+        "Crosshair for",
+        SettingField::dropdown(
+            options(scopes),
+            |cx| match Store::get(cx).selected_game {
+                Some(i) => format!("game:{i}").into(),
+                None => "other".into(),
+            },
+            |key, cx| {
+                let game = key.strip_prefix("game:").and_then(|i| i.parse().ok());
+                Store::select_game(cx, game);
+            },
+        ),
+    )
+    .description("Click a crosshair to use it there.")
+}
+
+struct Tile {
+    name: String,
+    image: Arc<RenderImage>,
+    selected: bool,
+    custom: bool,
+}
+
+fn gallery(tiles: &[Tile], cx: &App) -> AnyElement {
     let theme = cx.theme();
     h_flex()
         .w_full()
         .flex_wrap()
         .gap_3()
-        .children(tiles.iter().map(|(name, image, selected)| {
-            let pick = name.clone();
+        .children(tiles.iter().map(|tile| {
+            let (pick, name, custom) = (tile.name.clone(), tile.name.clone(), tile.custom);
             v_flex()
-                .id(SharedString::from(format!("tile-{name}")))
+                .id(SharedString::from(format!("tile-{}", tile.name)))
                 .w(px(THUMBNAIL + 32.))
                 .p_2()
                 .gap_1()
                 .items_center()
                 .rounded(theme.radius)
                 .border_1()
-                .border_color(if *selected { theme.ring } else { theme.border })
-                .when(*selected, |tile| tile.bg(theme.accent))
-                .cursor_pointer()
-                .child(img(ImageSource::Render(image.clone())).size(px(THUMBNAIL)))
-                .child(div().text_xs().text_center().child(name.clone()))
-                .on_click(move |_, _, cx| Store::select_crosshair(cx, pick.clone()))
+                .border_color(if tile.selected {
+                    theme.ring
+                } else {
+                    theme.border
+                })
+                .when(tile.selected, |t| t.bg(theme.accent))
+                .when(!tile.selected, |t| t.hover(|t| t.bg(theme.muted)))
+                .child(img(ImageSource::Render(tile.image.clone())).size(px(THUMBNAIL)))
+                .child(div().text_xs().text_center().child(tile.name.clone()))
+                .on_click(move |_, _, cx| use_crosshair(pick.clone(), cx))
+                .context_menu(move |menu, _, _| {
+                    let duplicate_name = name.clone();
+                    let delete_name = name.clone();
+                    menu.item(PopupMenuItem::new("Duplicate").on_click(move |_, _, cx| {
+                        Store::select_crosshair(cx, duplicate_name.clone());
+                        duplicate_selected(cx);
+                    }))
+                    .when(custom, |menu| {
+                        menu.separator()
+                            .item(
+                                PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+                                    confirm_delete(delete_name.clone(), window, cx)
+                                }),
+                            )
+                    })
+                })
         }))
         .into_any_element()
 }
 
-/// Adds a crosshair to yours and selects it.
-fn add_crosshair(cx: &mut App, base: &str, pixels: Pixels) {
-    let name = store::unique_name(&Store::get(cx).config, base);
-    let crosshair = Crosshair::pixels(name.clone(), pixels);
-    Store::edit(cx, |c| c.crosshairs.push(crosshair));
+/// Selecting a crosshair uses it for the program the page is set to.
+fn use_crosshair(name: String, cx: &mut App) {
+    Store::edit_game(cx, |g| g.crosshair = name.clone());
     Store::select_crosshair(cx, name);
 }
 
+/// Adds a crosshair to yours under a free name based on `base`, and uses it.
+fn add_crosshair(cx: &mut App, base: &str, crosshair: Crosshair) {
+    let name = store::unique_name(&Store::get(cx).config, base);
+    let crosshair = Crosshair {
+        name: name.clone(),
+        ..crosshair
+    };
+    Store::edit(cx, |c| c.crosshairs.push(crosshair));
+    use_crosshair(name, cx);
+}
+
 fn new_crosshair(cx: &mut App) {
-    add_crosshair(cx, "My crosshair", Pixels::new(15, 15));
+    add_crosshair(
+        cx,
+        "My crosshair",
+        Crosshair::pixels("", Pixels::new(15, 15)),
+    );
 }
 
 /// Copies the selected crosshair into yours. A built-in one becomes the pixels it
 /// draws at 1×, ready to paint over.
-fn copy_selected(cx: &mut App) {
+fn duplicate_selected(cx: &mut App) {
     let source = Store::get(cx).crosshair().clone();
-    let pixels = (source.pixels.clone()).unwrap_or_else(|| {
-        Pixels::from_image(&render(
-            &Crosshair {
-                zoom: 1.0,
-                ..source.clone()
-            },
-            Scale::ONE,
-        ))
-    });
-    let base = if Store::get(cx).crosshair_is_custom() {
-        format!("{} copy", source.name)
+    let (base, copy) = if Store::get(cx).crosshair_is_custom() {
+        (format!("{} copy", source.name), source)
     } else {
-        format!("My {}", source.name.to_lowercase())
+        // A built-in shape becomes the pixels it draws at 1×, keeping its look.
+        let at_1x = Crosshair {
+            zoom: 1.0,
+            ..source.clone()
+        };
+        let pixels = Pixels::from_image(&render(&at_1x, Scale::ONE));
+        let copy = Crosshair {
+            shape: None,
+            pixels: Some(pixels),
+            ..at_1x
+        };
+        (format!("My {}", source.name.to_lowercase()), copy)
     };
-    add_crosshair(cx, &base, pixels);
+    add_crosshair(cx, &base, copy);
 }
 
-pub(super) fn editor_page(
-    view: &SettingsView,
-    this: WeakEntity<SettingsView>,
-    cx: &App,
-) -> SettingPage {
-    let page = SettingPage::new("Editor").icon(IconName::Pencil);
-    let store = Store::get(cx);
-    if !store.crosshair_is_custom() {
-        let selected = store.selected_crosshair.clone();
-        return page.group(
-            SettingGroup::new()
-                .title("Nothing to edit")
-                .description("Pick one of your crosshairs in the Library, or start one here.")
-                .item(SettingItem::render(move |_, _, _| {
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            Button::new("editor-new")
-                                .primary()
-                                .icon(IconName::Plus)
-                                .label("New crosshair")
-                                .on_click(|_, _, cx| new_crosshair(cx)),
-                        )
-                        .child(
-                            Button::new("editor-customize")
-                                .outline()
-                                .label(format!("Customize {selected}"))
-                                .on_click(|_, _, cx| copy_selected(cx)),
-                        )
-                })),
-        );
-    }
+fn confirm_delete(name: String, window: &mut Window, cx: &mut App) {
+    let fallback = presets::all()[0].name.clone();
+    window.open_alert_dialog(cx, move |alert, _, _| {
+        let name = name.clone();
+        alert
+            .title(format!("Delete “{name}”?"))
+            .description(format!("Games that use it switch to {fallback}."))
+            .confirm()
+            .ok_text("Delete")
+            .ok_variant(ButtonVariant::Danger)
+            .on_ok(move |_, _, cx| {
+                Store::edit(cx, |c| store::remove_crosshair(c, &name));
+                true
+            })
+    });
+}
 
-    let crosshair = store.crosshair().clone();
-    let pixels = view
-        .paint
-        .stroke
-        .clone()
-        .or(crosshair.pixels.clone())
-        .unwrap_or_else(|| Pixels::new(15, 15));
-    let tool = view.paint.tool;
-    let mirror = view.paint.mirror;
-    let (can_undo, can_redo) = (!view.paint.undo.is_empty(), !view.paint.redo.is_empty());
-    let paint_color = view.paint_color.clone();
-
-    let details = SettingGroup::new().title("Details").items([
+fn details_group() -> SettingGroup {
+    SettingGroup::new().title("Details").items([
         SettingItem::new(
             "Name",
             SettingField::input(
@@ -275,17 +332,58 @@ pub(super) fn editor_page(
                 |v, cx| Store::edit_crosshair(cx, |c| c.opacity = v as f32 / 100.0),
             ),
         ),
-    ]);
+        SettingItem::render(|_, _, _| {
+            h_flex().w_full().justify_end().child(
+                Button::new("crosshair-delete")
+                    .outline()
+                    .danger()
+                    .icon(IconName::Trash)
+                    .label("Delete…")
+                    .on_click(|_, window, cx| {
+                        let name = Store::get(cx).selected_crosshair.clone();
+                        confirm_delete(name, window, cx);
+                    }),
+            )
+        }),
+    ])
+}
 
-    let size_this = this.clone();
-    let toolbar_this = this.clone();
-    let paint = SettingGroup::new()
+fn paint_group(view: &SettingsView, this: WeakEntity<SettingsView>) -> SettingGroup {
+    let crosshair_pixels = view.paint.stroke.clone();
+    let tool = view.paint.tool;
+    let mirror = view.paint.mirror;
+    let (can_undo, can_redo) = (!view.paint.undo.is_empty(), !view.paint.redo.is_empty());
+    let picker = view.paint_color.clone();
+    let focus = view.paint.focus.clone();
+
+    SettingGroup::new()
         .title("Paint")
         .description("Left click paints, right click erases. Each square is one game pixel; the lines mark the center.")
-        .item(SettingItem::render(move |_, _, _| {
-            let this = toolbar_this.clone();
-            let picker_color = paint_color.clone();
+        .item(SettingItem::render(move |_, _, cx| {
+            let pixels = crosshair_pixels
+                .clone()
+                .or_else(|| Store::get(cx).crosshair().pixels.clone())
+                .unwrap_or_else(|| Pixels::new(15, 15));
+            let set_tool = |tool: Tool| {
+                let this = this.clone();
+                move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
+                    let _ = this.update(cx, |v, cx| {
+                        v.paint.tool = tool;
+                        cx.notify();
+                    });
+                }
+            };
+            let undo_this = this.clone();
+            let redo_this = this.clone();
             v_flex()
+                .key_context(PAINT_CONTEXT)
+                .track_focus(&focus)
+                .on_action(move |_: &Undo, _, cx| {
+                    let _ = undo_this.update(cx, |v, cx| v.undo(false, cx));
+                })
+                .on_action(move |_: &Redo, _, cx| {
+                    let _ = redo_this.update(cx, |v, cx| v.undo(true, cx));
+                })
                 .w_full()
                 .gap_3()
                 .child(
@@ -299,28 +397,18 @@ pub(super) fn editor_page(
                                     Button::new("tool-pencil")
                                         .icon(IconName::Pencil)
                                         .label("Paint")
-                                        .selected(tool == Tool::Pencil),
+                                        .selected(tool == Tool::Pencil)
+                                        .on_click(set_tool(Tool::Pencil)),
                                 )
                                 .child(
                                     Button::new("tool-eraser")
                                         .icon(IconName::Eraser)
                                         .label("Erase")
-                                        .selected(tool == Tool::Eraser),
-                                )
-                                .on_click({
-                                    let this = this.clone();
-                                    move |selected: &Vec<usize>, _, cx| {
-                                        let tool = match selected.first() {
-                                            Some(1) => Tool::Eraser,
-                                            _ => Tool::Pencil,
-                                        };
-                                        let _ = this.update(cx, |v, cx| {
-                                            v.paint.tool = tool;
-                                            cx.notify();
-                                        });
-                                    }
-                                }),
+                                        .selected(tool == Tool::Eraser)
+                                        .on_click(set_tool(Tool::Eraser)),
+                                ),
                         )
+                        .child(ColorPicker::new(&picker).featured_colors(SWATCHES.map(to_hsla).to_vec()))
                         .child(
                             Switch::new("paint-mirror")
                                 .label("Mirror")
@@ -341,6 +429,7 @@ pub(super) fn editor_page(
                             Button::new("paint-undo")
                                 .ghost()
                                 .icon(IconName::Undo2)
+                                .tooltip("Undo")
                                 .disabled(!can_undo)
                                 .on_click({
                                     let this = this.clone();
@@ -353,6 +442,7 @@ pub(super) fn editor_page(
                             Button::new("paint-redo")
                                 .ghost()
                                 .icon(IconName::Redo2)
+                                .tooltip("Redo")
                                 .disabled(!can_redo)
                                 .on_click({
                                     let this = this.clone();
@@ -361,9 +451,10 @@ pub(super) fn editor_page(
                                     }
                                 }),
                         )
+                        .child(size_menu(&pixels, this.clone()))
                         .child(
                             Button::new("paint-clear")
-                                .ghost()
+                                .outline()
                                 .label("Clear")
                                 .on_click({
                                     let this = this.clone();
@@ -377,41 +468,19 @@ pub(super) fn editor_page(
                 )
                 .child(
                     h_flex()
-                        .gap_2()
-                        .child(ColorPicker::new(&picker_color))
-                        .children(SWATCHES.iter().enumerate().map(|(i, &color)| {
-                            let picker = picker_color.clone();
-                            div()
-                                .id(SharedString::from(format!("swatch-{i}")))
-                                .size(px(22.))
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(gpui_kit::black().opacity(0.3))
-                                .bg(to_hsla(color))
-                                .cursor_pointer()
-                                .on_click(move |_, window, cx| {
-                                    picker.update(cx, |state, cx| state.set_value(to_hsla(color), window, cx));
-                                })
-                        }))
-                        .child(div().flex_1())
-                        .child(size_menu(&pixels, size_this.clone())),
-                )
-                .child(
-                    h_flex()
                         .w_full()
                         .justify_center()
-                        .child(paint_canvas(pixels.clone(), this.clone())),
+                        .child(paint_canvas(pixels, focus.clone(), this.clone(), cx)),
                 )
-        }));
-
-    page.groups([paint, details])
+        }))
 }
 
 fn size_menu(pixels: &Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
     let (w, h) = (pixels.width(), pixels.height());
     Button::new("paint-size")
         .outline()
-        .label(format!("Canvas {w}×{h}"))
+        .label(format!("{w}×{h}"))
+        .tooltip("Canvas size")
         .dropdown_caret(true)
         .dropdown_menu(move |menu, _, _| {
             SIZES.iter().fold(menu, |menu, &n| {
@@ -430,7 +499,12 @@ fn size_menu(pixels: &Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
 }
 
 /// The drawing, magnified to a fixed size, over a checkerboard with the center marked.
-fn paint_canvas(pixels: Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
+fn paint_canvas(
+    pixels: Pixels,
+    focus: FocusHandle,
+    this: WeakEntity<SettingsView>,
+    cx: &App,
+) -> AnyElement {
     let bounds: Rc<Cell<Option<Bounds<Px>>>> = Rc::default();
     let n = pixels.width().max(pixels.height()) as f32;
     let cell = (CANVAS / n).floor();
@@ -458,19 +532,22 @@ fn paint_canvas(pixels: Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
     let end = |this: &WeakEntity<SettingsView>, cx: &mut App| {
         let _ = this.update(cx, |v, cx| v.end_stroke(cx));
     };
+    let theme = cx.theme();
+    let (light, dark, guide): (Hsla, Hsla, Hsla) =
+        (theme.background, theme.muted, theme.ring.opacity(0.6));
 
     let paint_bounds = bounds.clone();
     div()
         .id("paint-canvas")
         .w(px(width))
         .h(px(height))
+        .border_1()
+        .border_color(theme.border)
         .cursor_crosshair()
         .child(
             canvas(
                 move |b, _, _| paint_bounds.set(Some(b)),
-                move |b, _, window, cx| {
-                    let theme = cx.theme();
-                    let (light, dark): (Hsla, Hsla) = (theme.background, theme.muted);
+                move |b, _, window, _| {
                     for y in 0..pixels.height() {
                         for x in 0..pixels.width() {
                             let origin = point(
@@ -478,23 +555,24 @@ fn paint_canvas(pixels: Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
                                 b.origin.y + px(y as f32 * cell),
                             );
                             let square = Bounds::new(origin, size(px(cell), px(cell)));
-                            let checker = if (x + y) % 2 == 0 { light } else { dark };
-                            window.paint_quad(fill(square, checker));
+                            window.paint_quad(fill(
+                                square,
+                                if (x + y) % 2 == 0 { light } else { dark },
+                            ));
                             if let Some(color) = pixels.get(x, y) {
                                 window.paint_quad(fill(square, to_hsla(color)));
                             }
                         }
                     }
                     // Center lines, between or through the middle squares.
-                    let guide = theme.ring.opacity(0.6);
-                    let cx_line = b.origin.x + px(width / 2.0);
-                    let cy_line = b.origin.y + px(height / 2.0);
+                    let (mid_x, mid_y) =
+                        (b.origin.x + px(width / 2.0), b.origin.y + px(height / 2.0));
                     window.paint_quad(fill(
-                        Bounds::new(point(cx_line, b.origin.y), size(px(1.), px(height))),
+                        Bounds::new(point(mid_x, b.origin.y), size(px(1.), px(height))),
                         guide,
                     ));
                     window.paint_quad(fill(
-                        Bounds::new(point(b.origin.x, cy_line), size(px(width), px(1.))),
+                        Bounds::new(point(b.origin.x, mid_y), size(px(width), px(1.))),
                         guide,
                     ));
                 },
@@ -502,12 +580,18 @@ fn paint_canvas(pixels: Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
             .size_full(),
         )
         .on_mouse_down(MouseButton::Left, {
-            let (this, hit) = (this.clone(), hit.clone());
-            move |e: &MouseDownEvent, _, cx| stroke(&this, hit(e.position), false, cx)
+            let (this, hit, focus) = (this.clone(), hit.clone(), focus.clone());
+            move |e: &MouseDownEvent, window, cx| {
+                window.focus(&focus, cx);
+                stroke(&this, hit(e.position), false, cx);
+            }
         })
         .on_mouse_down(MouseButton::Right, {
             let (this, hit) = (this.clone(), hit.clone());
-            move |e: &MouseDownEvent, _, cx| stroke(&this, hit(e.position), true, cx)
+            move |e: &MouseDownEvent, window, cx| {
+                window.focus(&focus, cx);
+                stroke(&this, hit(e.position), true, cx);
+            }
         })
         .on_mouse_move({
             let (this, hit) = (this.clone(), hit.clone());
@@ -535,12 +619,15 @@ fn paint_canvas(pixels: Pixels, this: WeakEntity<SettingsView>) -> AnyElement {
 
 impl SettingsView {
     fn custom_pixels(cx: &App) -> Option<Pixels> {
-        Store::get(cx)
+        let store = Store::get(cx);
+        store
             .crosshair_is_custom()
-            .then(|| Store::get(cx).crosshair().pixels.clone())
+            .then(|| store.crosshair().pixels.clone())
             .flatten()
     }
 
+    /// Paints the cell under the pointer and every cell on the way from the last one:
+    /// mouse moves arrive about once a frame, so fast strokes would otherwise skip.
     fn stroke_at(&mut self, x: u32, y: u32, erase: bool, cx: &mut Context<Self>) {
         if self.paint.stroke.is_none() {
             let Some(current) = Self::custom_pixels(cx) else {
@@ -554,11 +641,15 @@ impl SettingsView {
             .then(|| self.paint_color.read(cx).value().map(from_hsla))
             .flatten();
         let mirror = self.paint.mirror;
+        let from = self.paint.last.unwrap_or((x, y));
+        self.paint.last = Some((x, y));
         if let Some(stroke) = self.paint.stroke.as_mut() {
-            if mirror {
-                stroke.set_mirrored(x, y, color);
-            } else {
-                stroke.set(x, y, color);
+            for (x, y) in line(from, (x, y)) {
+                if mirror {
+                    stroke.set_mirrored(x, y, color);
+                } else {
+                    stroke.set(x, y, color);
+                }
             }
         }
         cx.notify();
@@ -566,6 +657,7 @@ impl SettingsView {
     }
 
     fn end_stroke(&mut self, cx: &mut Context<Self>) {
+        self.paint.last = None;
         if let Some(pixels) = self.paint.stroke.take() {
             Store::edit_crosshair(cx, |c| c.pixels = Some(pixels));
         }
@@ -597,5 +689,42 @@ impl SettingsView {
             Store::edit_crosshair(cx, |c| c.pixels = Some(previous));
         }
         cx.notify();
+    }
+}
+
+/// The cells on a straight line between two cells, both included (Bresenham).
+fn line((x0, y0): (u32, u32), (x1, y1): (u32, u32)) -> Vec<(u32, u32)> {
+    let (mut x, mut y) = (x0 as i64, y0 as i64);
+    let (dx, dy) = ((x1 as i64 - x).abs(), -(y1 as i64 - y).abs());
+    let (sx, sy) = (
+        if x < x1 as i64 { 1 } else { -1 },
+        if y < y1 as i64 { 1 } else { -1 },
+    );
+    let mut error = dx + dy;
+    let mut cells = vec![(x as u32, y as u32)];
+    while (x, y) != (x1 as i64, y1 as i64) {
+        let doubled = 2 * error;
+        if doubled >= dy {
+            error += dy;
+            x += sx;
+        }
+        if doubled <= dx {
+            error += dx;
+            y += sy;
+        }
+        cells.push((x as u32, y as u32));
+    }
+    cells
+}
+
+#[cfg(test)]
+mod tests {
+    use super::line;
+
+    #[test]
+    fn line_has_no_gaps() {
+        assert_eq!(line((0, 0), (3, 1)), vec![(0, 0), (1, 0), (2, 1), (3, 1)]);
+        assert_eq!(line((2, 2), (2, 2)), vec![(2, 2)]);
+        assert_eq!(line((3, 0), (0, 3)).len(), 4);
     }
 }
