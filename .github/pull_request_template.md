@@ -7,12 +7,12 @@
 ## How tested
 
 - [ ] `mise run check`
-- [ ] Settings UI changed: `mise run goldens`, and the new screenshots look right
+- [ ] Settings UI changed: `mise run goldens`, and the new screenshots look right (the `goldens` check fails otherwise)
 - [ ] On Windows: game, resolution and scale mode used:
 
 ## Screenshots
 
-<!-- Required for overlay and settings UI changes. -->
+<!-- Overlay changes: a screenshot over a game. The settings window is covered by the goldens. -->
 
 ## Checklist
 

@@ -19,7 +19,7 @@ Requires [mise](https://mise.jdx.dev) (or rustup alone; the Rust version is in `
 ```sh
 mise run run      # run crossz
 mise run check    # format, lint and test everything, plus the Windows cross-check
-mise run goldens  # rewrite the settings screenshots (macOS) after a UI change
+mise run goldens  # have CI re-render the settings screenshots after a UI change
 mise run check-win  # cross-check the Windows crates from macOS/Linux
 ```
 
