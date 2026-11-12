@@ -89,6 +89,9 @@ enum Tool {
 
 /// The paint editor's state. A stroke edits a copy, saved when the mouse is released.
 struct Paint {
+    /// The Crosshairs page shows the editor for the selected crosshair instead of the
+    /// gallery.
+    open: bool,
     /// The crosshair the undo history belongs to.
     target: String,
     /// Focused by clicking the canvas, so undo and redo shortcuts reach the editor.
@@ -190,6 +193,7 @@ impl SettingsView {
             capture_focus: cx.focus_handle(),
             recording: None,
             paint: Paint {
+                open: false,
                 target: String::new(),
                 focus: cx.focus_handle(),
                 tool: Tool::Pencil,

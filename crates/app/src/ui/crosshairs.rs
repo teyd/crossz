@@ -1,5 +1,5 @@
-//! The Crosshairs page: built-in and your own crosshairs, where clicking one uses it, and
-//! below them the paint editor for the selected one of yours.
+//! The Crosshairs page: built-in and your own crosshairs, where clicking one uses it.
+//! Editing one of yours replaces the gallery with the paint editor until you're done.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -28,7 +28,7 @@ use gpui_kit::{
 use super::{SettingsView, Tool, from_hsla, to_hsla};
 use crate::store::{self, Store};
 
-actions!(crossz_paint, [Undo, Redo]);
+actions!(crossz_paint, [Undo, Redo, CloseEditor]);
 
 const PAINT_CONTEXT: &str = "PaintEditor";
 const THUMBNAIL: f32 = 64.0;
@@ -53,6 +53,7 @@ pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(undo, Undo, Some(PAINT_CONTEXT)),
         KeyBinding::new(redo, Redo, Some(PAINT_CONTEXT)),
+        KeyBinding::new("escape", CloseEditor, Some(PAINT_CONTEXT)),
     ]);
 }
 
@@ -64,7 +65,12 @@ pub(super) fn page(
 ) -> SettingPage {
     let store = Store::get(cx);
     let selected = store.config.general.crosshair.clone();
-    let is_custom = store.active_is_custom();
+    // Deleting the edited crosshair selects a built-in one, which ends editing.
+    view.paint.open &= store.active_is_custom();
+    if view.paint.open {
+        return editor_page(view, this, selected);
+    }
+
     let custom: Vec<Crosshair> = store.config.crosshairs.clone();
     let mut tiles = |crosshairs: &[Crosshair]| -> Vec<Tile> {
         crosshairs
@@ -84,12 +90,15 @@ pub(super) fn page(
     let (builtin, yours) = (tiles(presets::all()), tiles(&custom));
 
     let mut groups: Vec<SettingGroup> = own_crosshair_note(cx).into_iter().collect();
+    let builtin_this = this.clone();
+    let yours_this = this.clone();
     groups.extend([
         SettingGroup::new()
             .title("Built-in")
-            .item(SettingItem::render(move |_, _, cx| gallery(&builtin, cx))),
+            .item(SettingItem::render(move |_, _, cx| gallery(&builtin, builtin_this.clone(), cx))),
         SettingGroup::new()
             .title("Yours")
+            .description("Double-click one of yours to edit it.")
             .item(SettingItem::render(move |_, _, cx| {
                 if yours.is_empty() {
                     return div()
@@ -98,47 +107,50 @@ pub(super) fn page(
                         .child("None yet. Create a new crosshair, or right-click a built-in one and duplicate it to paint your own version.")
                         .into_any_element();
                 }
-                gallery(&yours, cx)
+                gallery(&yours, yours_this.clone(), cx)
             })),
     ]);
-    if is_custom {
-        groups.push(paint_group(view, this));
-        groups.push(details_group());
-    } else {
-        groups.push(
-            SettingGroup::new().title("Edit").item(SettingItem::render(move |_, _, cx| {
-                h_flex()
-                    .w_full()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Built-in crosshairs can't be edited. Duplicate this one to paint your own version."),
-                    )
-                    .child(
-                        Button::new("crosshair-duplicate")
-                            .outline()
-                            .label("Duplicate")
-                            .on_click(|_, _, cx| {
-                                let name = Store::get(cx).active().name.clone();
-                                duplicate(&name, cx);
-                            }),
-                    )
-            })),
-        );
-    }
 
     SettingPage::new("Crosshairs")
         .icon(IconName::Crosshair)
-        .title_suffix(|_, _| {
+        .title_suffix(move |_, _| {
+            let this = this.clone();
             Button::new("crosshair-new")
                 .icon(IconName::Plus)
                 .label("New crosshair")
-                .on_click(|_, _, cx| new_crosshair(cx))
+                .on_click(move |_, _, cx| new_crosshair(this.clone(), cx))
         })
         .groups(groups)
+}
+
+/// The paint editor for the selected crosshair, in place of the gallery.
+fn editor_page(view: &SettingsView, this: WeakEntity<SettingsView>, name: String) -> SettingPage {
+    let done = this.clone();
+    SettingPage::new("Crosshairs")
+        .icon(IconName::Crosshair)
+        .title_suffix(move |_, cx| {
+            let done = done.clone();
+            h_flex()
+                .gap_1()
+                .text_color(cx.theme().muted_foreground)
+                .child(IconName::ChevronRight)
+                .child(div().text_color(cx.theme().foreground).child(name.clone()))
+                .child(div().w_3())
+                .child(
+                    Button::new("crosshair-done")
+                        .label("Done")
+                        .tooltip("Back to all crosshairs (Esc)")
+                        .on_click(move |_, _, cx| set_editing(&done, false, cx)),
+                )
+        })
+        .groups([paint_group(view, this), details_group()])
+}
+
+fn set_editing(this: &WeakEntity<SettingsView>, open: bool, cx: &mut App) {
+    let _ = this.update(cx, |v, cx| {
+        v.paint.open = open;
+        cx.notify();
+    });
 }
 
 /// Names the games that keep their own crosshair, since selecting one doesn't change them.
@@ -181,7 +193,7 @@ struct Tile {
     custom: bool,
 }
 
-fn gallery(tiles: &[Tile], cx: &App) -> AnyElement {
+fn gallery(tiles: &[Tile], this: WeakEntity<SettingsView>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     h_flex()
         .w_full()
@@ -194,6 +206,7 @@ fn gallery(tiles: &[Tile], cx: &App) -> AnyElement {
                 tile.custom,
                 tile.selected,
             );
+            let (click_this, menu_this) = (this.clone(), this.clone());
             v_flex()
                 .id(SharedString::from(format!("tile-{}", tile.name)))
                 .w(px(THUMBNAIL + 32.))
@@ -211,10 +224,16 @@ fn gallery(tiles: &[Tile], cx: &App) -> AnyElement {
                 .when(!tile.selected, |t| t.hover(|t| t.bg(theme.muted)))
                 .child(img(ImageSource::Render(tile.image.clone())).size(px(THUMBNAIL)))
                 .child(div().text_xs().text_center().child(tile.name.clone()))
-                .on_click(move |_, _, cx| Store::use_crosshair(cx, pick.clone()))
+                .on_click(move |e, _, cx| {
+                    Store::use_crosshair(cx, pick.clone());
+                    if custom && e.click_count() == 2 {
+                        set_editing(&click_this, true, cx);
+                    }
+                })
                 .context_menu(move |menu, _, _| {
                     let (use_name, edit_name, duplicate_name, delete_name) =
                         (name.clone(), name.clone(), name.clone(), name.clone());
+                    let (edit_this, duplicate_this) = (menu_this.clone(), menu_this.clone());
                     menu.item(
                         PopupMenuItem::new("Use")
                             .disabled(selected)
@@ -223,14 +242,14 @@ fn gallery(tiles: &[Tile], cx: &App) -> AnyElement {
                     .item(PopupMenuItem::new("Edit").on_click(move |_, window, cx| {
                         if custom {
                             Store::use_crosshair(cx, edit_name.clone());
+                            set_editing(&edit_this, true, cx);
                         } else {
-                            explain_builtin(edit_name.clone(), window, cx);
+                            explain_builtin(edit_name.clone(), edit_this.clone(), window, cx);
                         }
                     }))
-                    .item(
-                        PopupMenuItem::new("Duplicate")
-                            .on_click(move |_, _, cx| duplicate(&duplicate_name, cx)),
-                    )
+                    .item(PopupMenuItem::new("Duplicate").on_click(move |_, _, cx| {
+                        duplicate(&duplicate_name, duplicate_this.clone(), cx)
+                    }))
                     .when(custom, |menu| {
                         menu.separator()
                             .item(
@@ -244,8 +263,8 @@ fn gallery(tiles: &[Tile], cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// Adds a crosshair to yours under a free name based on `base`, and uses it.
-fn add_crosshair(cx: &mut App, base: &str, crosshair: Crosshair) {
+/// Adds a crosshair to yours under a free name based on `base`, uses it and edits it.
+fn add_crosshair(cx: &mut App, base: &str, crosshair: Crosshair, this: WeakEntity<SettingsView>) {
     let name = store::unique_name(&Store::get(cx).config, base);
     let crosshair = Crosshair {
         name: name.clone(),
@@ -253,20 +272,27 @@ fn add_crosshair(cx: &mut App, base: &str, crosshair: Crosshair) {
     };
     Store::edit(cx, |c| c.crosshairs.push(crosshair));
     Store::use_crosshair(cx, name);
+    set_editing(&this, true, cx);
 }
 
-fn new_crosshair(cx: &mut App) {
+fn new_crosshair(this: WeakEntity<SettingsView>, cx: &mut App) {
     add_crosshair(
         cx,
         "My crosshair",
         Crosshair::pixels("", Pixels::new(15, 15)),
+        this,
     );
 }
 
 /// Built-in crosshairs can't be edited; offers to duplicate one instead.
-fn explain_builtin(name: String, window: &mut Window, cx: &mut App) {
+fn explain_builtin(
+    name: String,
+    this: WeakEntity<SettingsView>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     window.open_alert_dialog(cx, move |alert, _, _| {
-        let name = name.clone();
+        let (name, this) = (name.clone(), this.clone());
         alert
             .title(format!("“{name}” can't be edited"))
             .description(
@@ -275,15 +301,15 @@ fn explain_builtin(name: String, window: &mut Window, cx: &mut App) {
             .confirm()
             .ok_text("Duplicate")
             .on_ok(move |_, _, cx| {
-                duplicate(&name, cx);
+                duplicate(&name, this.clone(), cx);
                 true
             })
     });
 }
 
-/// Copies a crosshair into yours and uses the copy. A built-in one becomes the pixels
+/// Copies a crosshair into yours and edits the copy. A built-in one becomes the pixels
 /// it draws at 1×, ready to paint over.
-fn duplicate(name: &str, cx: &mut App) {
+fn duplicate(name: &str, this: WeakEntity<SettingsView>, cx: &mut App) {
     let Some(source) = Store::get(cx).config.crosshair(name).cloned() else {
         return;
     };
@@ -303,7 +329,7 @@ fn duplicate(name: &str, cx: &mut App) {
         };
         (format!("My {}", source.name.to_lowercase()), copy)
     };
-    add_crosshair(cx, &base, copy);
+    add_crosshair(cx, &base, copy, this);
 }
 
 fn confirm_delete(name: String, window: &mut Window, cx: &mut App) {
@@ -416,6 +442,10 @@ fn paint_group(view: &SettingsView, this: WeakEntity<SettingsView>) -> SettingGr
                 })
                 .on_action(move |_: &Redo, _, cx| {
                     let _ = redo_this.update(cx, |v, cx| v.undo(true, cx));
+                })
+                .on_action({
+                    let this = this.clone();
+                    move |_: &CloseEditor, _, cx| set_editing(&this, false, cx)
                 })
                 .w_full()
                 .gap_3()
