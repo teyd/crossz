@@ -194,7 +194,7 @@ mod golden {
         check("crosshairs-yours", "Crosshairs", &[], |_, _| {});
         check("games", "Games", &[], |_, _| {});
         // The "crossz <version>" line changes with every release.
-        check("general", "General", &[[630, 530, 800, 572]], |_, _| {});
+        check("general", "General", &[[630, 530, 900, 572]], |_, _| {});
         check("editor", "Crosshairs", &[], |window, cx| {
             window.click("crosshair-new", cx)
         });
