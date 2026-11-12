@@ -7,6 +7,12 @@
 //! diff before committing.
 
 fn main() {
+    // Text anti-aliasing differs by a few hundred pixels between Macs (OS and GPU), so a
+    // golden from one machine can't gate another; CI skips them and `mise run check` runs them.
+    if std::env::var_os("CI").is_some() {
+        println!("golden: skipped on CI; run `mise run check` locally");
+        return;
+    }
     #[cfg(target_os = "macos")]
     golden::run();
     #[cfg(not(target_os = "macos"))]
