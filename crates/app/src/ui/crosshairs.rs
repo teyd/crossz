@@ -739,6 +739,10 @@ impl SettingsView {
     }
 
     fn undo(&mut self, redo: bool, cx: &mut Context<Self>) {
+        // Mid-stroke the drawing isn't saved yet; the stroke becomes one step on mouse-up.
+        if self.paint.stroke.is_some() {
+            return;
+        }
         let Some(current) = Self::custom_pixels(cx) else {
             return;
         };
