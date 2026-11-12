@@ -52,6 +52,7 @@ mod imp {
             let message = match event {
                 Event::EnabledChanged(on) => Message::Enabled(on),
                 Event::InputUnavailable => Message::InputUnavailable,
+                Event::Status(status) => Message::Status(status),
             };
             let _ = messages.send_blocking(message);
         });

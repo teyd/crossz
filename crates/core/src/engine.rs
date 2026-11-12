@@ -19,6 +19,28 @@ pub struct Shown<'a> {
     pub target: Target,
 }
 
+/// What the overlay is doing about the program in front, for showing to the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Status {
+    /// The program in front, as reported by the platform.
+    pub program: Option<String>,
+    /// The listed game it is, by display name.
+    pub game: Option<String>,
+    pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Visibility {
+    /// Turned off with the master toggle.
+    Off,
+    /// Showing this crosshair.
+    Shown(String),
+    /// A bind hides it right now.
+    Hidden,
+    /// Nothing is set up for this program.
+    NotHere,
+}
+
 /// Decides whether the crosshair is shown and which one, from the config, the
 /// foreground program and key/button presses. Toggles and crosshair switches are
 /// remembered per game.
@@ -62,7 +84,7 @@ impl Engine {
 
     /// `exe` is the foreground program's file name, or `None` if it couldn't be determined.
     pub fn set_foreground(&mut self, exe: Option<&str>) {
-        self.foreground = exe.map(str::to_ascii_lowercase);
+        self.foreground = exe.map(str::to_owned);
     }
 
     pub fn enabled(&self) -> bool {
@@ -145,6 +167,22 @@ impl Engine {
             game,
             target,
         })
+    }
+
+    pub fn status(&self) -> Status {
+        let game = (self.foreground.as_deref())
+            .and_then(|exe| self.config.games.iter().find(|g| g.matches(exe)));
+        let visibility = match self.shown() {
+            _ if !self.enabled => Visibility::Off,
+            Some(shown) => Visibility::Shown(shown.crosshair.name.clone()),
+            None if self.matched().is_some() => Visibility::Hidden,
+            None => Visibility::NotHere,
+        };
+        Status {
+            program: self.foreground.clone(),
+            game: game.map(|g| g.display_name().to_owned()),
+            visibility,
+        }
     }
 
     /// The listed game in the foreground, or other programs, if the crosshair applies there.
@@ -365,5 +403,27 @@ mod tests {
         without_mine.games = vec![game("a.exe", "Dot", vec![])];
         e.set_config(without_mine);
         assert_eq!(shown(&e), Some("Dot"));
+    }
+
+    #[test]
+    fn status_says_why_nothing_shows() {
+        let c = config(
+            Show::InGames,
+            vec![game(
+                "cs2.exe",
+                "Dot",
+                vec![bind("Mouse2", Action::HoldToHide)],
+            )],
+        );
+        let mut e = Engine::new(c);
+        e.set_foreground(Some("Code"));
+        assert_eq!(e.status().visibility, Visibility::NotHere);
+        assert_eq!(e.status().program.as_deref(), Some("Code"));
+        e.set_foreground(Some("CS2.exe"));
+        assert_eq!(e.status().visibility, Visibility::Shown("Dot".into()));
+        e.key(Key::MOUSE2, true);
+        assert_eq!(e.status().visibility, Visibility::Hidden);
+        e.set_enabled(false);
+        assert_eq!(e.status().visibility, Visibility::Off);
     }
 }

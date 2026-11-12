@@ -1,13 +1,14 @@
-//! The settings window: the live preview on the left, settings pages on the right.
+//! The settings window: the live preview on the left, pages in tabs on the right.
 
 mod crosshairs;
 mod games;
 mod general;
+mod layout;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crossz_core::{Chord, Color, Crosshair, Pixels, Resolution, Scale};
+use crossz_core::{Chord, Color, Crosshair, Pixels, Resolution, Scale, Show, Visibility};
 use gpui_kit::component::{
     ActiveTheme as _,
     alert::Alert,
@@ -15,7 +16,8 @@ use gpui_kit::component::{
     color_picker::{ColorPickerEvent, ColorPickerState},
     h_flex,
     input::{InputEvent, InputState},
-    setting::Settings,
+    scroll::ScrollableElement as _,
+    tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -33,6 +35,30 @@ use crate::{Update, capture, preview};
 struct SettingsWindow(AnyWindowHandle);
 
 impl Global for SettingsWindow {}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Crosshairs,
+    Games,
+    General,
+}
+
+impl Page {
+    const ALL: [Page; 3] = [Page::Crosshairs, Page::Games, Page::General];
+
+    fn title(self) -> &'static str {
+        match self {
+            Page::Crosshairs => "Crosshairs",
+            Page::Games => "Games",
+            Page::General => "General",
+        }
+    }
+}
+
+/// The page last shown, to reopen the window on it.
+struct LastPage(Page);
+
+impl Global for LastPage {}
 
 /// Registers the settings window's key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
@@ -121,7 +147,16 @@ struct GameInputs {
     height: Entity<InputState>,
 }
 
+/// The selected crosshair's details, loaded whenever another one is selected.
+struct CrosshairInputs {
+    name: Entity<InputState>,
+    zoom: Entity<InputState>,
+    opacity: Entity<InputState>,
+}
+
 pub struct SettingsView {
+    page: Page,
+    crosshair_inputs: CrosshairInputs,
     paint_color: Entity<ColorPickerState>,
     new_game: Entity<InputState>,
     game_inputs: GameInputs,
@@ -186,7 +221,41 @@ impl SettingsView {
                 cx,
             ),
         ]);
+        let crosshair_inputs = CrosshairInputs {
+            name: cx.new(|cx| InputState::new(window, cx)),
+            zoom: cx.new(|cx| InputState::new(window, cx).step(0.25).min(0.25).max(8.0)),
+            opacity: cx.new(|cx| InputState::new(window, cx).step(5.0).min(0.0).max(100.0)),
+        };
+        subscriptions.extend([
+            cx.subscribe(
+                &crosshair_inputs.zoom,
+                |_, input, event: &InputEvent, cx| {
+                    if let InputEvent::Change = event
+                        && let Ok(zoom) = input.read(cx).value().trim().parse::<f32>()
+                    {
+                        Store::edit_crosshair(cx, |c| c.zoom = zoom.clamp(0.25, 8.0));
+                    }
+                },
+            ),
+            cx.subscribe(
+                &crosshair_inputs.opacity,
+                |_, input, event: &InputEvent, cx| {
+                    if let InputEvent::Change = event
+                        && let Ok(percent) = input.read(cx).value().trim().parse::<f32>()
+                    {
+                        Store::edit_crosshair(cx, |c| {
+                            c.opacity = percent.clamp(0.0, 100.0) / 100.0
+                        });
+                    }
+                },
+            ),
+            cx.subscribe_in(&crosshair_inputs.name, window, Self::on_name_input),
+        ]);
         SettingsView {
+            page: cx
+                .try_global::<LastPage>()
+                .map_or(Page::Crosshairs, |p| p.0),
+            crosshair_inputs,
             paint_color,
             new_game,
             game_inputs,
@@ -206,6 +275,54 @@ impl SettingsView {
             images: HashMap::new(),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Renames the selected crosshair on Enter or leaving the field; a name that's empty
+    /// or taken goes back to the current one.
+    fn on_name_input(
+        &mut self,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+            return;
+        }
+        let name = input.read(cx).value().trim().to_owned();
+        let old = Store::get(cx).config.general.crosshair.clone();
+        if name == old {
+            return;
+        }
+        if name.is_empty() || Store::get(cx).config.crosshair(&name).is_some() {
+            input.update(cx, |state, cx| state.set_value(old, window, cx));
+            return;
+        }
+        Store::edit(cx, |c| crate::store::rename_crosshair(c, &old, &name));
+        // Same drawing under a new name: keep its undo history.
+        self.paint.target = name;
+    }
+
+    /// Fills the details fields from the selected crosshair.
+    fn load_crosshair_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let crosshair = Store::get(cx).active().clone();
+        let inputs = &self.crosshair_inputs;
+        for (input, value) in [
+            (&inputs.name, crosshair.name.clone()),
+            (&inputs.zoom, crosshair.zoom.to_string()),
+            (
+                &inputs.opacity,
+                (crosshair.opacity * 100.0).round().to_string(),
+            ),
+        ] {
+            input.update(cx, |state, cx| state.set_value(value, window, cx));
+        }
+    }
+
+    fn show_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
+        cx.set_global(LastPage(page));
+        cx.notify();
     }
 
     /// A crosshair image, re-rendered only when what it shows changes.
@@ -277,6 +394,7 @@ impl SettingsView {
             Resolution::Native => "not stretched".to_owned(),
             r => format!("stretched like {r}"),
         };
+        let status = status_line(cx);
         let theme = cx.theme();
 
         v_flex()
@@ -288,6 +406,16 @@ impl SettingsView {
             .bg(theme.sidebar)
             .border_r_1()
             .border_color(theme.sidebar_border)
+            .when_some(status, |panel, (text, color)| {
+                panel.child(
+                    h_flex()
+                        .items_start()
+                        .gap_2()
+                        .pb_3()
+                        .child(div().flex_none().mt_1p5().size_2().rounded_full().bg(color))
+                        .child(div().flex_1().min_w_0().text_sm().child(text)),
+                )
+            })
             .child(
                 div()
                     .text_sm()
@@ -328,10 +456,17 @@ impl Render for SettingsView {
             self.paint.stroke = None;
             self.paint.undo.clear();
             self.paint.redo.clear();
+            self.load_crosshair_inputs(window, cx);
         }
+        window.set_window_title(&format!("{} – crossz", self.page.title()));
         let this = cx.entity().downgrade();
         let preview = self.preview_panel(window, cx);
-        let crosshairs = crosshairs::page(self, this.clone(), window, cx);
+        let content = match self.page {
+            Page::Crosshairs => crosshairs::page(self, this.clone(), window, cx),
+            Page::Games => games::page(self, this.clone(), cx),
+            Page::General => general::page(self, this.clone(), cx),
+        };
+        let selected_tab = Page::ALL.iter().position(|p| *p == self.page).unwrap_or(0);
         let store = Store::get(cx);
         let error = store.error.clone();
         let input_unavailable = store.input_unavailable;
@@ -361,16 +496,66 @@ impl Render for SettingsView {
                         )
                     })
                     .child(
-                        Settings::new("crossz-settings")
-                            .sidebar_width(px(180.))
-                            .pages([
-                                games::page(self, this.clone(), cx),
-                                crosshairs,
-                                general::page(self, this, cx),
-                            ]),
+                        TabBar::new("pages")
+                            .underline()
+                            .px_4()
+                            .selected_index(selected_tab)
+                            .on_click(cx.listener(|view, ix: &usize, _, cx| {
+                                view.show_page(Page::ALL[*ix], cx);
+                            }))
+                            .children(Page::ALL.map(|page| Tab::new().label(page.title()))),
+                    )
+                    .child(
+                        div().flex_1().min_h_0().child(
+                            v_flex()
+                                .id("page")
+                                .size_full()
+                                .px_4()
+                                .pt_6()
+                                .pb_8()
+                                .gap_8()
+                                .children(content)
+                                .overflow_y_scrollbar(),
+                        ),
                     ),
             )
     }
+}
+
+/// What the overlay does in the last program you used, e.g. "Showing Dot in Rust", with
+/// the color of its status dot.
+fn status_line(cx: &App) -> Option<(String, Hsla)> {
+    let store = Store::get(cx);
+    let status = store.status()?;
+    let theme = cx.theme();
+    let place = status.game.or(status.program);
+    let general = &store.config.general;
+    Some(match (status.visibility, place) {
+        (Visibility::Off, _) => {
+            let text = match general.master_toggle {
+                Some(chord) => format!("Off. Press {chord} to turn it on."),
+                None => "Off. Turn it on from the tray.".to_owned(),
+            };
+            (text, theme.warning)
+        }
+        (Visibility::Shown(crosshair), Some(place)) => {
+            (format!("Showing {crosshair} in {place}"), theme.success)
+        }
+        (Visibility::Shown(crosshair), None) => (format!("Showing {crosshair}"), theme.success),
+        (Visibility::Hidden, Some(place)) => (
+            format!("Hidden by a bind in {place}"),
+            theme.muted_foreground,
+        ),
+        (Visibility::Hidden, None) => ("Hidden by a bind".to_owned(), theme.muted_foreground),
+        (Visibility::NotHere, Some(place)) if general.show == Show::InGames => (
+            format!("Not showing: {place} isn't one of your games"),
+            theme.muted_foreground,
+        ),
+        (Visibility::NotHere, Some(place)) => {
+            (format!("Not showing in {place}"), theme.muted_foreground)
+        }
+        (Visibility::NotHere, None) => ("Waiting for a game".to_owned(), theme.muted_foreground),
+    })
 }
 
 /// macOS only reports keys and buttons to apps the user allowed under Input Monitoring.
@@ -455,15 +640,6 @@ fn chord_button(
             let _ = on_mouse.update(cx, |view, cx| view.finish_recording(Some(chord), cx));
         })
         .into_any_element()
-}
-
-fn options<K: Into<SharedString>, L: Into<SharedString>>(
-    items: impl IntoIterator<Item = (K, L)>,
-) -> Vec<(SharedString, SharedString)> {
-    items
-        .into_iter()
-        .map(|(k, l)| (k.into(), l.into()))
-        .collect()
 }
 
 fn to_hsla(color: Color) -> Hsla {

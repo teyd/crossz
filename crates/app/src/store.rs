@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crossz_core::{Action, Config, Crosshair, Game, presets};
+use crossz_core::{Action, Config, Crosshair, Engine, Game, Status, Visibility, presets};
 use gpui_kit::{App, Global};
 
 /// The config being edited, shared by every part of the UI. The file on disk is the
@@ -17,6 +17,10 @@ pub struct Store {
     pub screen: (u32, u32),
     /// Binds can't work until the user allows input access (macOS Input Monitoring).
     pub input_unavailable: bool,
+    /// What the overlay did in the last program used other than crossz itself.
+    status: Option<Status>,
+    /// The master toggle.
+    enabled: bool,
 }
 
 impl Global for Store {}
@@ -30,6 +34,8 @@ impl Store {
             selected_game: None,
             screen: crate::overlay::main_display_size(),
             input_unavailable: false,
+            status: None,
+            enabled: true,
         };
         store.clamp_selection();
         store
@@ -135,6 +141,41 @@ impl Store {
                 change(c);
             }
         });
+    }
+
+    /// Keeps the overlay's status, except while crossz itself is in front: the settings
+    /// window should describe the game you came from.
+    pub fn set_status(cx: &mut App, status: Status) {
+        let own = std::env::current_exe().ok();
+        let own = own
+            .as_deref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str());
+        let store = cx.global_mut::<Store>();
+        store.enabled = status.visibility != Visibility::Off;
+        if own.is_none() || status.program.as_deref() != own {
+            store.status = Some(status);
+        }
+        cx.refresh_windows();
+    }
+
+    /// What the overlay does in the last program used, with the config as it is now:
+    /// it only reports changes while that program is in front.
+    pub fn status(&self) -> Option<Status> {
+        if !cfg!(any(windows, target_os = "macos")) {
+            return None;
+        }
+        let reported = self.status.as_ref();
+        if let Some(reported) = reported
+            && reported.visibility == Visibility::Hidden
+        {
+            return Some(reported.clone());
+        }
+        let program = reported.and_then(|r| r.program.as_deref());
+        let mut engine = Engine::new(self.config.clone());
+        engine.set_foreground(program);
+        engine.set_enabled(self.enabled);
+        Some(engine.status())
     }
 
     /// Takes a config that changed on disk, e.g. edited by hand.

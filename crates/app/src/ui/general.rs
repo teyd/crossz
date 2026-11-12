@@ -3,118 +3,132 @@ use gpui_kit::component::{
     Disableable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    setting::{SettingField, SettingGroup, SettingItem, SettingPage},
+    switch::Switch,
 };
-use gpui_kit::{App, ParentElement as _, Styled as _, WeakEntity};
+use gpui_kit::{AnyElement, App, IntoElement as _, ParentElement as _, Styled as _, WeakEntity};
 
+use super::layout::{Section, row};
 use super::{Recording, SettingsView, chord_button};
 use crate::Update;
 use crate::store::Store;
 use crate::updater::{self, State as UpdateState};
 
-pub(super) fn page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -> SettingPage {
-    let store = Store::get(cx);
-    let master = store.config.general.master_toggle;
+pub(super) fn page(
+    view: &SettingsView,
+    this: WeakEntity<SettingsView>,
+    cx: &App,
+) -> Vec<AnyElement> {
+    let general = &Store::get(cx).config.general;
+    let master = general.master_toggle;
     let recording = view.recording == Some(Recording::MasterToggle);
-    let focus = view.capture_focus.clone();
-    let path = store.path.clone();
-    let path_label = path.display().to_string();
+    let path = Store::get(cx).path.clone();
     let update_state = cx.global::<Update>().state.clone();
+    let switch = |id: &'static str, on: bool, set: fn(&mut crossz_core::General, bool)| {
+        Switch::new(id)
+            .checked(on)
+            .on_change(move |on: &bool, _, cx| {
+                let on = *on;
+                Store::edit(cx, |c| set(&mut c.general, on));
+            })
+    };
 
-    let startup = SettingGroup::new().title("Startup").items([
-        SettingItem::new(
+    let startup = Section::new()
+        .title("Startup")
+        .child(row(
             if cfg!(windows) {
                 "Start with Windows"
             } else {
                 "Start at login"
             },
-            SettingField::switch(
-                |cx| Store::get(cx).config.general.start_with_windows,
-                |on, cx| Store::edit(cx, |c| c.general.start_with_windows = on),
-            ),
-        )
-        .description("Starts in the tray when you log in."),
-        SettingItem::new(
+            Some("Starts in the tray when you log in.".into()),
+            switch("start-at-login", general.start_with_windows, |g, on| {
+                g.start_with_windows = on
+            }),
+            cx,
+        ))
+        .child(row(
             "Start minimized",
-            SettingField::switch(
-                |cx| Store::get(cx).config.general.start_minimized,
-                |on, cx| Store::edit(cx, |c| c.general.start_minimized = on),
-            ),
-        )
-        .description("When starting at login, open to the tray instead of this window."),
-    ]);
+            Some("When starting at login, open to the tray instead of this window.".into()),
+            switch("start-minimized", general.start_minimized, |g, on| {
+                g.start_minimized = on
+            }),
+            cx,
+        ));
 
-    let updates = SettingGroup::new().title("Updates").items([
-        SettingItem::new(
+    let updates = Section::new()
+        .title("Updates")
+        .child(row(
             format!("crossz {}", updater::VERSION),
-            SettingField::render(move |_, _, _| update_button(&update_state)),
-        )
-        .description(update_description(&cx.global::<Update>().state)),
-        SettingItem::new(
+            Some(update_description(&update_state).into()),
+            update_button(&update_state),
+            cx,
+        ))
+        .child(row(
             "Check for updates automatically",
-            SettingField::switch(
-                |cx| Store::get(cx).config.general.check_for_updates,
-                |on, cx| Store::edit(cx, |c| c.general.check_for_updates = on),
+            Some(
+                "Daily. Updates download in the background and install when you restart crossz."
+                    .into(),
             ),
-        )
-        .description(
-            "Daily. Updates download in the background and install when you restart crossz.",
-        ),
-    ]);
+            switch("check-for-updates", general.check_for_updates, |g, on| {
+                g.check_for_updates = on
+            }),
+            cx,
+        ));
 
-    let controls = SettingGroup::new().title("Controls").items([
-        SettingItem::new(
+    let controls = Section::new()
+        .title("Controls")
+        .child(row(
             "Master toggle",
-            SettingField::render(move |_, _, cx| {
-                h_flex()
-                    .gap_2()
-                    .child(chord_button(
-                        "master-toggle".into(),
-                        master,
-                        recording,
-                        focus.clone(),
-                        Recording::MasterToggle,
-                        this.clone(),
-                        cx,
-                    ))
-                    .child(
-                        Button::new("master-toggle-clear")
-                            .ghost()
-                            .icon(IconName::X)
-                            .tooltip("Clear")
-                            .disabled(master.is_none())
-                            .on_click(|_, _, cx| {
-                                Store::edit(cx, |c| c.general.master_toggle = None);
-                            }),
-                    )
-            }),
-        )
-        .description("Turns crossz on or off everywhere."),
-        SettingItem::new(
+            Some("Turns crossz on or off everywhere.".into()),
+            h_flex()
+                .gap_2()
+                .child(chord_button(
+                    "master-toggle".into(),
+                    master,
+                    recording,
+                    view.capture_focus.clone(),
+                    Recording::MasterToggle,
+                    this,
+                    cx,
+                ))
+                .child(
+                    Button::new("master-toggle-clear")
+                        .ghost()
+                        .icon(IconName::X)
+                        .tooltip("Clear")
+                        .disabled(master.is_none())
+                        .on_click(|_, _, cx| {
+                            Store::edit(cx, |c| c.general.master_toggle = None);
+                        }),
+                ),
+            cx,
+        ))
+        .child(row(
             "Hide from screen capture",
-            SettingField::switch(
-                |cx| Store::get(cx).config.general.exclude_from_capture,
-                |on, cx| Store::edit(cx, |c| c.general.exclude_from_capture = on),
+            Some("Keeps the crosshair out of screenshots, OBS and Discord streams.".into()),
+            switch(
+                "exclude-from-capture",
+                general.exclude_from_capture,
+                |g, on| g.exclude_from_capture = on,
             ),
-        )
-        .description("Keeps the crosshair out of screenshots, OBS and Discord streams."),
-        SettingItem::new(
+            cx,
+        ))
+        .child(row(
             "Settings file",
-            SettingField::render(move |_, _, _| {
-                let path = path.clone();
-                Button::new("open-config")
-                    .outline()
-                    .icon(IconName::FolderOpen)
-                    .label("Show in folder")
-                    .on_click(move |_, _, cx| cx.reveal_path(&path))
-            }),
-        )
-        .description(path_label),
-    ]);
+            Some(path.display().to_string().into()),
+            Button::new("open-config")
+                .outline()
+                .icon(IconName::FolderOpen)
+                .label("Show in folder")
+                .on_click(move |_, _, cx| cx.reveal_path(&path)),
+            cx,
+        ));
 
-    SettingPage::new("General")
-        .icon(IconName::Settings)
-        .groups([startup, updates, controls])
+    vec![
+        startup.into_any_element(),
+        updates.into_any_element(),
+        controls.into_any_element(),
+    ]
 }
 
 fn update_button(state: &UpdateState) -> Button {

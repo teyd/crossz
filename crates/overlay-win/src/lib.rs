@@ -38,12 +38,14 @@ pub enum Command {
     Quit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// The master toggle changed, from a hotkey or `Command::SetEnabled`.
     EnabledChanged(bool),
     /// Keys and buttons can't be read. Never happens on Windows; here to match macOS.
     InputUnavailable,
+    /// What the overlay is doing changed, e.g. another program came to the front.
+    Status(crossz_core::Status),
 }
 
 /// Handle to the overlay thread. Dropping it stops the overlay.

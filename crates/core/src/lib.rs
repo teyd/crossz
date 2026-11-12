@@ -13,7 +13,7 @@ pub mod scale;
 
 pub use color::Color;
 pub use config::{Action, Binding, Config, Game, General, Show};
-pub use engine::{Engine, Shown, Target};
+pub use engine::{Engine, Shown, Status, Target, Visibility};
 pub use input::{Chord, Key, Mods};
 pub use model::{Arms, Circle, Crosshair, Dot, Outline, Shape};
 pub use pixels::Pixels;

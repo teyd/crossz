@@ -12,8 +12,8 @@ use gpui_kit::component::{
     button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _},
     color_picker::ColorPicker,
     h_flex,
+    input::{Input, NumberInput},
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
-    setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage},
     switch::Switch,
     v_flex,
 };
@@ -25,6 +25,7 @@ use gpui_kit::{
     WeakEntity, Window, actions, canvas, div, fill, img, point, px, size,
 };
 
+use super::layout::{Section, note, row};
 use super::{SettingsView, Tool, from_hsla, to_hsla};
 use crate::store::{self, Store};
 
@@ -62,13 +63,13 @@ pub(super) fn page(
     this: WeakEntity<SettingsView>,
     window: &mut Window,
     cx: &mut App,
-) -> SettingPage {
+) -> Vec<AnyElement> {
     let store = Store::get(cx);
     let selected = store.config.general.crosshair.clone();
     // Deleting the edited crosshair selects a built-in one, which ends editing.
     view.paint.open &= store.active_is_custom();
     if view.paint.open {
-        return editor_page(view, this, selected);
+        return editor_page(view, this, selected, cx);
     }
 
     let custom: Vec<Crosshair> = store.config.crosshairs.clone();
@@ -89,61 +90,71 @@ pub(super) fn page(
     };
     let (builtin, yours) = (tiles(presets::all()), tiles(&custom));
 
-    let mut groups: Vec<SettingGroup> = own_crosshair_note(cx).into_iter().collect();
-    let builtin_this = this.clone();
-    let yours_this = this.clone();
-    groups.extend([
-        SettingGroup::new()
-            .title("Built-in")
-            .item(SettingItem::render(move |_, _, cx| gallery(&builtin, builtin_this.clone(), cx))),
-        SettingGroup::new()
-            .title("Yours")
-            .description("Double-click one of yours to edit it.")
-            .item(SettingItem::render(move |_, _, cx| {
-                if yours.is_empty() {
-                    return div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("None yet. Create a new crosshair, or right-click a built-in one and duplicate it to paint your own version.")
-                        .into_any_element();
-                }
-                gallery(&yours, yours_this.clone(), cx)
-            })),
-    ]);
-
-    SettingPage::new("Crosshairs")
-        .icon(IconName::Crosshair)
-        .title_suffix(move |_, _| {
-            let this = this.clone();
+    let new = this.clone();
+    let toolbar = h_flex()
+        .w_full()
+        .gap_3()
+        .child(
             Button::new("crosshair-new")
                 .icon(IconName::Plus)
                 .label("New crosshair")
-                .on_click(move |_, _, cx| new_crosshair(this.clone(), cx))
-        })
-        .groups(groups)
+                .on_click(move |_, _, cx| new_crosshair(new.clone(), cx)),
+        )
+        .child(div().flex_1().min_w_0().children(own_crosshair_note(cx)));
+    let yours = if yours.is_empty() {
+        note(
+            "None yet. Create a new crosshair, or right-click a built-in one and duplicate it to paint your own version.",
+            cx,
+        )
+    } else {
+        gallery(&yours, this.clone(), cx)
+    };
+    vec![
+        toolbar.into_any_element(),
+        Section::new()
+            .title("Built-in")
+            .child(gallery(&builtin, this, cx))
+            .into_any_element(),
+        Section::new()
+            .title("Yours")
+            .description("Double-click one of yours to edit it.")
+            .child(yours)
+            .into_any_element(),
+    ]
 }
 
 /// The paint editor for the selected crosshair, in place of the gallery.
-fn editor_page(view: &SettingsView, this: WeakEntity<SettingsView>, name: String) -> SettingPage {
+fn editor_page(
+    view: &SettingsView,
+    this: WeakEntity<SettingsView>,
+    name: String,
+    cx: &App,
+) -> Vec<AnyElement> {
     let done = this.clone();
-    SettingPage::new("Crosshairs")
-        .icon(IconName::Crosshair)
-        .title_suffix(move |_, cx| {
-            let done = done.clone();
-            h_flex()
-                .gap_1()
-                .text_color(cx.theme().muted_foreground)
-                .child(IconName::ChevronRight)
-                .child(div().text_color(cx.theme().foreground).child(name.clone()))
-                .child(div().w_3())
-                .child(
-                    Button::new("crosshair-done")
-                        .label("Done")
-                        .tooltip("Back to all crosshairs (Esc)")
-                        .on_click(move |_, _, cx| set_editing(&done, false, cx)),
-                )
-        })
-        .groups([paint_group(view, this), details_group()])
+    let header = h_flex()
+        .w_full()
+        .gap_3()
+        .child(
+            Button::new("crosshair-back")
+                .ghost()
+                .icon(IconName::ChevronLeft)
+                .tooltip("All crosshairs (Esc)")
+                .on_click({
+                    let done = done.clone();
+                    move |_, _, cx| set_editing(&done, false, cx)
+                }),
+        )
+        .child(div().flex_1().min_w_0().truncate().text_lg().child(name))
+        .child(
+            Button::new("crosshair-done")
+                .label("Done")
+                .on_click(move |_, _, cx| set_editing(&done, false, cx)),
+        );
+    vec![
+        header.into_any_element(),
+        paint_section(view, this, cx).into_any_element(),
+        details_section(view, cx).into_any_element(),
+    ]
 }
 
 fn set_editing(this: &WeakEntity<SettingsView>, open: bool, cx: &mut App) {
@@ -154,7 +165,7 @@ fn set_editing(this: &WeakEntity<SettingsView>, open: bool, cx: &mut App) {
 }
 
 /// Names the games that keep their own crosshair, since selecting one doesn't change them.
-fn own_crosshair_note(cx: &App) -> Option<SettingGroup> {
+fn own_crosshair_note(cx: &App) -> Option<AnyElement> {
     let store = Store::get(cx);
     if store.config.general.show != Show::InGames {
         return None;
@@ -176,14 +187,7 @@ fn own_crosshair_note(cx: &App) -> Option<SettingGroup> {
             many.join(", ")
         ),
     };
-    Some(
-        SettingGroup::new().item(SettingItem::render(move |_, _, cx| {
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(text.clone())
-        })),
-    )
+    Some(note(text, cx))
 }
 
 struct Tile {
@@ -209,7 +213,7 @@ fn gallery(tiles: &[Tile], this: WeakEntity<SettingsView>, cx: &App) -> AnyEleme
             let (click_this, menu_this) = (this.clone(), this.clone());
             v_flex()
                 .id(SharedString::from(format!("tile-{}", tile.name)))
-                .w(px(THUMBNAIL + 32.))
+                .w(px(THUMBNAIL + 44.))
                 .p_2()
                 .gap_1()
                 .items_center()
@@ -223,7 +227,14 @@ fn gallery(tiles: &[Tile], this: WeakEntity<SettingsView>, cx: &App) -> AnyEleme
                 .when(tile.selected, |t| t.bg(theme.accent))
                 .when(!tile.selected, |t| t.hover(|t| t.bg(theme.muted)))
                 .child(img(ImageSource::Render(tile.image.clone())).size(px(THUMBNAIL)))
-                .child(div().text_xs().text_center().child(tile.name.clone()))
+                .child(
+                    div()
+                        .w_full()
+                        .text_xs()
+                        .text_center()
+                        .truncate()
+                        .child(tile.name.clone()),
+                )
                 .on_click(move |e, _, cx| {
                     Store::use_crosshair(cx, pick.clone());
                     if custom && e.click_count() == 2 {
@@ -351,47 +362,29 @@ fn confirm_delete(name: String, window: &mut Window, cx: &mut App) {
     });
 }
 
-fn details_group() -> SettingGroup {
-    SettingGroup::new().title("Details").items([
-        SettingItem::new(
+fn details_section(view: &SettingsView, cx: &App) -> Section {
+    let inputs = &view.crosshair_inputs;
+    Section::new()
+        .title("Details")
+        .child(row(
             "Name",
-            SettingField::input(
-                |cx| Store::get(cx).active().name.clone().into(),
-                |name, cx| {
-                    let name = name.trim();
-                    let old = Store::get(cx).config.general.crosshair.clone();
-                    if !name.is_empty() && Store::get(cx).config.crosshair(name).is_none() {
-                        Store::edit(cx, |c| store::rename_crosshair(c, &old, name));
-                    }
-                },
-            ),
-        ),
-        SettingItem::new(
+            Some("Press Enter to rename.".into()),
+            div().w(px(220.)).child(Input::new(&inputs.name)),
+            cx,
+        ))
+        .child(row(
             "Zoom",
-            SettingField::number_input(
-                NumberFieldOptions {
-                    min: 0.25,
-                    max: 8.0,
-                    step: 0.25,
-                },
-                |cx| Store::get(cx).active().zoom as f64,
-                |v, cx| Store::edit_crosshair(cx, |c| c.zoom = v as f32),
-            ),
-        )
-        .description("Makes the crosshair bigger or smaller, on top of each game's stretch."),
-        SettingItem::new(
+            Some("Makes the crosshair bigger or smaller, on top of each game's stretch.".into()),
+            div().w(px(140.)).child(NumberInput::new(&inputs.zoom)),
+            cx,
+        ))
+        .child(row(
             "Opacity %",
-            SettingField::number_input(
-                NumberFieldOptions {
-                    min: 0.0,
-                    max: 100.0,
-                    step: 5.0,
-                },
-                |cx| (Store::get(cx).active().opacity as f64 * 100.0).round(),
-                |v, cx| Store::edit_crosshair(cx, |c| c.opacity = v as f32 / 100.0),
-            ),
-        ),
-        SettingItem::render(|_, _, _| {
+            None,
+            div().w(px(140.)).child(NumberInput::new(&inputs.opacity)),
+            cx,
+        ))
+        .child(
             h_flex().w_full().justify_end().child(
                 Button::new("crosshair-delete")
                     .outline()
@@ -402,12 +395,11 @@ fn details_group() -> SettingGroup {
                         let name = Store::get(cx).config.general.crosshair.clone();
                         confirm_delete(name, window, cx);
                     }),
-            )
-        }),
-    ])
+            ),
+        )
 }
 
-fn paint_group(view: &SettingsView, this: WeakEntity<SettingsView>) -> SettingGroup {
+fn paint_section(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -> Section {
     let crosshair_pixels = view.paint.stroke.clone();
     let tool = view.paint.tool;
     let mirror = view.paint.mirror;
@@ -415,10 +407,10 @@ fn paint_group(view: &SettingsView, this: WeakEntity<SettingsView>) -> SettingGr
     let picker = view.paint_color.clone();
     let focus = view.paint.focus.clone();
 
-    SettingGroup::new()
+    Section::new()
         .title("Paint")
         .description("Left click paints, right click erases. Each square is one game pixel; the lines mark the center.")
-        .item(SettingItem::render(move |_, _, cx| {
+        .child({
             let pixels = crosshair_pixels
                 .clone()
                 .or_else(|| Store::get(cx).active().pixels.clone())
@@ -535,7 +527,7 @@ fn paint_group(view: &SettingsView, this: WeakEntity<SettingsView>) -> SettingGr
                         .justify_center()
                         .child(paint_canvas(pixels, focus.clone(), this.clone(), cx)),
                 )
-        }))
+        })
 }
 
 fn size_menu(pixels: &Pixels, this: WeakEntity<SettingsView>) -> AnyElement {

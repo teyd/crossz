@@ -28,6 +28,7 @@ pub enum Message {
     Tray(tray::Command),
     Update(updater::State),
     InputUnavailable,
+    Status(crossz_core::Status),
 }
 
 /// Where the updater is, for the settings window and the tray.
@@ -218,6 +219,7 @@ fn handle(message: Message, cx: &mut App) {
             }
         }
         Message::Tray(command) => run(command, cx),
+        Message::Status(status) => Store::set_status(cx, status),
         Message::InputUnavailable => {
             cx.global_mut::<Store>().input_unavailable = true;
             cx.refresh_windows();

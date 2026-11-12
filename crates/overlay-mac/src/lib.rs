@@ -33,12 +33,14 @@ pub enum Command {
     Quit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// The master toggle changed, from a hotkey or `Command::SetEnabled`.
     EnabledChanged(bool),
     /// Keys and buttons can't be read until crossz gets Input Monitoring permission.
     InputUnavailable,
+    /// What the overlay is doing changed, e.g. another program came to the front.
+    Status(crossz_core::Status),
 }
 
 /// How often the frontmost app and its window are checked. macOS has no notification
@@ -51,6 +53,8 @@ struct Shared {
     /// What's on screen now, to skip redundant work: `None` until known, then
     /// `Some(None)` while hidden.
     shown: Mutex<Option<Option<Placement>>>,
+    /// The status last reported through `on_event`.
+    status: Mutex<Option<crossz_core::Status>>,
     /// Bumped with every decision; the main thread drops updates that aren't the latest,
     /// since several threads can queue them out of order.
     generation: Arc<AtomicU64>,
@@ -84,6 +88,7 @@ impl Overlay {
             engine: Mutex::new(Engine::new(config)),
             foreground: Mutex::new(None),
             shown: Mutex::new(None),
+            status: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
             on_event: Box::new(on_event),
             quit: AtomicBool::new(false),
@@ -151,6 +156,7 @@ fn poll_foreground(shared: Arc<Shared>) {
 /// Works out what should be on screen and, if that changed, updates the panel on the
 /// main thread. Callable from any thread.
 fn refresh(shared: &Shared) {
+    report_status(shared);
     let next = placement(shared);
     let generation = {
         let mut shown = shared.shown.lock().unwrap();
@@ -171,6 +177,15 @@ fn refresh(shared: &Shared) {
             Some((p, image)) => window::show(&image, &frame(&p, &image)),
         }
     });
+}
+
+fn report_status(shared: &Shared) {
+    let status = shared.engine.lock().unwrap().status();
+    let mut last = shared.status.lock().unwrap();
+    if last.as_ref() != Some(&status) {
+        *last = Some(status.clone());
+        (shared.on_event)(Event::Status(status));
+    }
 }
 
 fn placement(shared: &Shared) -> Option<(Placement, Image)> {

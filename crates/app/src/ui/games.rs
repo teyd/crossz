@@ -12,7 +12,6 @@ use gpui_kit::component::{
     h_flex,
     input::{Input, NumberInput},
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
-    setting::{SettingField, SettingGroup, SettingItem, SettingPage},
     switch::Switch,
     v_flex,
 };
@@ -22,81 +21,89 @@ use gpui_kit::{
     RenderImage, SharedString, Styled as _, WeakEntity, Window, div, img, px,
 };
 
-use super::{Recording, SettingsView, chord_button, options};
+use super::layout::{Section, row};
+use super::{Recording, SettingsView, chord_button};
 use crate::overlay;
 use crate::store::Store;
 
-pub(super) fn page(view: &SettingsView, this: WeakEntity<SettingsView>, cx: &App) -> SettingPage {
-    let config = &Store::get(cx).config;
+pub(super) fn page(
+    view: &SettingsView,
+    this: WeakEntity<SettingsView>,
+    cx: &mut App,
+) -> Vec<AnyElement> {
+    let config = Store::get(cx).config.clone();
     let show = config.general.show;
-    let mode = SettingGroup::new().item(
-        SettingItem::new(
-            "Show the crosshair",
-            SettingField::dropdown(
-                options([
-                    ("in_games", "Only in my games"),
-                    ("except_listed", "Everywhere except some programs"),
-                    ("everywhere", "Everywhere"),
-                ]),
-                |cx| show_key(Store::get(cx).config.general.show).into(),
-                |key, cx| {
-                    let show = match key.as_ref() {
-                        "except_listed" => Show::ExceptListed,
-                        "everywhere" => Show::Everywhere,
-                        _ => Show::InGames,
-                    };
-                    Store::edit(cx, |c| c.general.show = show);
-                    Store::select_game(cx, None);
-                },
-            ),
-        )
-        .description(match show {
-            Show::InGames => "Only while one of your games is in front, each with its own setup.",
-            Show::ExceptListed => "In every program but the ones listed here.",
-            Show::Everywhere => "In every program, with one setup.",
-        }),
-    );
+    let mode = Section::new().child(row(
+        "Show the crosshair",
+        Some(
+            match show {
+                Show::InGames => {
+                    "Only while one of your games is in front, each with its own setup."
+                }
+                Show::ExceptListed => "In every program but the ones listed here.",
+                Show::Everywhere => "In every program, with one setup.",
+            }
+            .into(),
+        ),
+        show_picker(show),
+        cx,
+    ));
 
-    let games: Vec<SettingItem> = (config.games.iter().enumerate())
-        .map(|(i, game)| game_row(Some(i), game.clone(), show, this.clone()))
+    let games: Vec<AnyElement> = (config.games.iter().enumerate())
+        .map(|(i, game)| game_row(Some(i), game.clone(), show, this.clone(), cx))
         .collect();
     let add = add_game_row(view, show);
-    let groups = match show {
+    let other = |this, cx: &mut App| game_row(None, config.other_programs.clone(), show, this, cx);
+    let sections = match show {
         Show::InGames => vec![
             mode,
-            SettingGroup::new()
+            Section::new()
                 .title("Games")
-                .description("Each game has its own crosshair, stretch, offset and binds. Right-click a game for more.")
-                .item(add)
-                .items(games),
+                .description("Each game has its own stretch, offset and binds, and can keep its own crosshair. Right-click a game for more.")
+                .child(add)
+                .children(games),
         ],
         Show::ExceptListed => vec![
             mode,
-            SettingGroup::new()
-                .title("Hidden in")
-                .item(add)
-                .items(games),
-            SettingGroup::new().title("Everywhere else").item(game_row(
-                None,
-                config.other_programs.clone(),
-                show,
-                this,
-            )),
+            Section::new().title("Hidden in").child(add).children(games),
+            Section::new().title("Everywhere else").child(other(this, cx)),
         ],
         Show::Everywhere => vec![
             mode,
-            SettingGroup::new().title("All programs").item(game_row(
-                None,
-                config.other_programs.clone(),
-                show,
-                this,
-            )),
+            Section::new().title("All programs").child(other(this, cx)),
         ],
     };
-    SettingPage::new("Games")
-        .icon(IconName::Gamepad2)
-        .default_open(true)
-        .groups(groups)
+    sections
+        .into_iter()
+        .map(IntoElement::into_any_element)
+        .collect()
+}
+
+fn show_picker(show: Show) -> AnyElement {
+    const MODES: [(Show, &str); 3] = [
+        (Show::InGames, "Only in my games"),
+        (Show::ExceptListed, "Everywhere except some programs"),
+        (Show::Everywhere, "Everywhere"),
+    ];
+    let label = MODES
+        .iter()
+        .find(|(s, _)| *s == show)
+        .map_or("", |(_, l)| l);
+    Button::new("show-mode")
+        .outline()
+        .label(label)
+        .dropdown_caret(true)
+        .dropdown_menu(move |menu, _, _| {
+            MODES.iter().fold(menu, |menu, &(mode, label)| {
+                menu.item(PopupMenuItem::new(label).checked(mode == show).on_click(
+                    move |_, _, cx| {
+                        Store::edit(cx, |c| c.general.show = mode);
+                        Store::select_game(cx, None);
+                    },
+                ))
+            })
+        })
+        .into_any_element()
 }
 
 /// A listed game, or with `None` the setup used outside listed games.
@@ -105,8 +112,9 @@ fn game_row(
     game: Game,
     show: Show,
     this: WeakEntity<SettingsView>,
-) -> SettingItem {
-    SettingItem::render(move |_, _, cx| {
+    cx: &mut App,
+) -> AnyElement {
+    {
         let key = index.map_or("other".to_owned(), |i| format!("{i}-{}", game.exe));
         let id = |part: &str| SharedString::from(format!("game-{part}-{key}"));
         let icon = (game.path.as_deref()).and_then(|path| overlay::icon(path, cx));
@@ -203,7 +211,8 @@ fn game_row(
                         }),
                 )
             })
-    })
+            .into_any_element()
+    }
 }
 
 /// "Own crosshair: Dot · stretched like 1280x960 · 1 bind"
@@ -239,14 +248,14 @@ fn program_icon(icon: Option<Arc<RenderImage>>, cx: &App) -> AnyElement {
     }
 }
 
-fn add_game_row(view: &SettingsView, show: Show) -> SettingItem {
+fn add_game_row(view: &SettingsView, show: Show) -> AnyElement {
     let input = view.new_game.clone();
     let what = if show == Show::InGames {
         "game"
     } else {
         "program"
     };
-    SettingItem::render(move |_, _, _| {
+    {
         let add_input = input.clone();
         h_flex()
             .w_full()
@@ -269,7 +278,8 @@ fn add_game_row(view: &SettingsView, show: Show) -> SettingItem {
                         add_input.update(cx, |state, cx| state.set_value("", window, cx));
                     }),
             )
-    })
+            .into_any_element()
+    }
 }
 
 /// Programs with a window right now, rescanned each time the menu opens.
@@ -719,12 +729,4 @@ fn stretch_picker(current: Resolution, this: WeakEntity<SettingsView>) -> AnyEle
             )
         })
         .into_any_element()
-}
-
-fn show_key(show: Show) -> &'static str {
-    match show {
-        Show::InGames => "in_games",
-        Show::ExceptListed => "except_listed",
-        Show::Everywhere => "everywhere",
-    }
 }
