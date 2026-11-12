@@ -9,8 +9,8 @@ Crosshair overlay for borderless windowed games on Windows. Rust workspace:
 
 ## Commands
 
-- `mise run check`: the local loop. fmt check, clippy `-D warnings`, every test (including the UI integration and screenshot tests) and the Windows cross-check. Run it before pushing. There is no review bot; Pullfrog is gone.
-- `mise run goldens`: rewrite the screenshot PNGs in `crates/app/tests/golden/` after an intended UI change, then look at the images and the diff. Screenshots are renders from the maintainer's Mac and are only compared on macOS outside CI: text anti-aliasing differs by a few hundred pixels between machines, so CI skips them (the test is a no-op there and on other platforms). Run `mise run check` yourself.
+- `mise run check`: the local loop. fmt check, clippy `-D warnings`, every test (the screenshot tests only run on Linux, in CI) and the Windows cross-check. Run it before pushing. There is no review bot; Pullfrog is gone.
+- `mise run goldens`: have CI re-render the screenshot PNGs in `crates/app/tests/golden/` for the pushed branch and download them (`scripts/update-goldens.sh`). Run it after an intended UI change, look at every changed image, and commit them with the change. Screenshots are Linux renders (wgpu on lavapipe, one canonical renderer because text anti-aliasing differs between machines); the `goldens` CI job compares them, and on macOS and Windows the test does nothing.
 - `mise run core`: fmt check, clippy and tests for core (runs anywhere; this is what the Linux CI job runs)
 - `mise run check-win`: cross-clippy the Win32 overlay from macOS/Linux (the app itself needs `llvm-rc` to cross-build, so CI builds it on Windows)
 - `mise run run`: run crossz
@@ -22,7 +22,7 @@ Checks that run every time:
 - Lints in the root `Cargo.toml` are errors: `unsafe_op_in_unsafe_fn`, `unused_must_use`, and clippy's `undocumented_unsafe_blocks`, `await_holding_lock`, `dbg_macro`, `todo`, `unimplemented`.
 - `crates/core/tests/code_shape.rs` fails when a `.rs` file under `crates/*/src` has more than 800 lines before its `#[cfg(test)] mod tests`. Split the file instead of raising the limit. Files named `*tests.rs` are skipped.
 - `crates/app/src/ui/ui_tests.rs`: UI integration tests that drive the real settings window headless (`gpui_kit::test`). Hooks for them are `.test_support().aria_label(..)` on the element, not test-only state.
-- `crates/app/tests/golden.rs`: screenshot tests of each settings page (`harness = false`, because the headless Metal renderer needs the main thread). On failure it writes `<scene>.actual.png` next to the golden.
+- `crates/app/tests/golden.rs`: screenshot tests of each settings page (`harness = false`, because the headless renderer needs the main thread). On failure it writes `<scene>.actual.png` next to the golden, and CI uploads them as the `golden-actual` artifact.
 
 ## Rules
 
@@ -53,6 +53,6 @@ Each is checkable; the test that holds it is named where there is one.
 - Nothing slow runs in the raw input path (`WM_INPUT`, the macOS event tap callback).
 - Every `unsafe` block has a `// SAFETY:` comment (enforced by clippy) and says why it is sound, including handle lifetimes.
 - Raster changes come with pixel tests in `crates/core/src/raster.rs`.
-- Settings UI changes come with regenerated goldens (`mise run goldens`) whose images you looked at.
+- Settings UI changes come with regenerated goldens (`mise run goldens`) whose images you looked at; the `goldens` CI job fails otherwise.
 - Config file changes stay backwards compatible: an old file loads and migrates.
 - Never inject into games, read their memory or hook their rendering.

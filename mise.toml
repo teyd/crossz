@@ -42,10 +42,13 @@ run = [
   "mise run check-win",
 ]
 
+[tasks.golden-check]
+description = "Compare the settings screenshots with the goldens (Linux only; a no-op elsewhere)"
+run = "cargo test --locked -p crossz --test golden"
+
 [tasks.goldens]
-description = "Rewrite the screenshot tests' PNGs (macOS) after an intended UI change; review the diff"
-env = { CROSSZ_UPDATE_GOLDENS = "1" }
-run = "cargo test -p crossz --test golden"
+description = "Have CI re-render the screenshot goldens for the current branch and download them; look at the images, then commit"
+run = "scripts/update-goldens.sh"
 
 [tasks.ci]
 description = "What CI checks on Linux, plus the Windows cross-check (`check` covers the whole workspace)"
