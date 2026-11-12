@@ -33,8 +33,22 @@ run = [
 description = "Cross-check the Win32 overlay from macOS/Linux (the app needs llvm-rc; CI builds it on Windows)"
 run = "cargo xwin clippy -p crossz-overlay-win --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
 
+[tasks.check]
+description = "The local check loop: format, lint and test everything this machine can build"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+  "cargo test --workspace",
+  "mise run check-win",
+]
+
+[tasks.goldens]
+description = "Rewrite the screenshot tests' PNGs (macOS) after an intended UI change; review the diff"
+env = { CROSSZ_UPDATE_GOLDENS = "1" }
+run = "cargo test -p crossz --test golden"
+
 [tasks.ci]
-description = "Everything CI checks that runs locally"
+description = "What CI checks on Linux, plus the Windows cross-check (`check` covers the whole workspace)"
 depends = ["core", "check-win"]
 
 [tasks.run]

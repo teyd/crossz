@@ -18,11 +18,18 @@ thiserror = "2"
 tiny-skia = { version = "0.12", default-features = false, features = ["std"] }
 toml = "1"
 
+# Errors, not warnings, so they hold even outside `-D warnings`.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
 
 [workspace.lints.clippy]
-undocumented_unsafe_blocks = "warn"
+# Every `unsafe` block says why it's sound in a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "deny"
+await_holding_lock = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
 
 [profile.release]
 lto = "thin"

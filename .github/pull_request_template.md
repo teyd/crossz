@@ -6,8 +6,8 @@
 
 ## How tested
 
-- [ ] `mise run core`
-- [ ] `mise run check-win`
+- [ ] `mise run check`
+- [ ] Settings UI changed: `mise run goldens`, and the new screenshots look right
 - [ ] On Windows: game, resolution and scale mode used:
 
 ## Screenshots
