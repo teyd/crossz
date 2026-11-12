@@ -409,14 +409,23 @@ mod tests {
     fn the_selected_crosshair_applies_everywhere_unless_a_game_has_its_own() {
         let mut own = Game::new("a.exe");
         own.crosshair = Some("Dot".into());
-        let plain = Game::new("b.exe");
-        let mut c = config(Show::Everywhere, vec![own, plain]);
+        let games = vec![own, Game::new("b.exe")];
+
+        let mut c = config(Show::InGames, games.clone());
         c.general.crosshair = "mine".into();
-        c.games[0].crosshair = Some("Dot".into());
         let mut e = Engine::new(c);
-        e.set_foreground(Some("notepad.exe"));
-        assert_eq!(shown(&e), Some("mine"));
+        e.set_foreground(Some("a.exe"));
+        assert_eq!(shown(&e), Some("Dot"));
         e.set_foreground(Some("b.exe"));
+        assert_eq!(shown(&e), Some("mine"));
+
+        // Outside the games list there is no per-game override: everything uses the selection.
+        let mut c = config(Show::Everywhere, games);
+        c.general.crosshair = "mine".into();
+        let mut e = Engine::new(c);
+        e.set_foreground(Some("a.exe"));
+        assert_eq!(shown(&e), Some("mine"));
+        e.set_foreground(Some("notepad.exe"));
         assert_eq!(shown(&e), Some("mine"));
     }
 
